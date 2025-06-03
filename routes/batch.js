@@ -35,14 +35,19 @@ router.get("/test-eventor-anrop", async (req, res) => {
     const events = parsed?.ArrayOfEvent?.Event || [];
     const list = Array.isArray(events) ? events : [events];
 
-    console.log("✅ Antal tävlingar:", list.length);
+    console.log("Antal tävlingar:", list.length);
     list.forEach(ev => {
       const id = ev.EventId || "okänd ID";
       const name = ev.Name || "okänt namn";
       const start = ev.StartTime || "okänt datum";
-      console.log(`📅 ${id} – ${name} (${start})`);
+      console.log(`${id} – ${name} (${start})`);
     });
 
     res.status(200).send(`Parsed ${list.length} tävlingar – se logg`);
   } catch (error) {
-    console.error("❌ Fel vid anrop/parsin
+    console.error("Fel vid anrop eller parsing:", error.message);
+    res.status(500).send("Fel vid anrop eller parsing");
+  }
+});
+
+module.exports = router;
