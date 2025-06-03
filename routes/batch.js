@@ -1,12 +1,14 @@
 const express = require("express");
 const axios = require("axios");
+const xml2js = require("xml2js");
+
 const router = express.Router();
+const parser = new xml2js.Parser({ explicitArray: false });
 
 router.get("/test-eventor-anrop", async (req, res) => {
-  const organisationId = "461"; // FK Åsen
   const apiKey = process.env.EVENTOR_API_KEY;
 
-  const fromDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) // 30 dagar bakåt
+  const fromDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
     .toISOString()
     .split("T")[0] + " 00:00:00";
   const toDate = new Date()
@@ -24,14 +26,23 @@ router.get("/test-eventor-anrop", async (req, res) => {
         "Connection": "keep-alive",
         "User-Agent": "PostmanRuntime/7.44.0",
       },
+      responseType: "text",
     });
 
-    console.log("✅ Svar från Eventor:\n", response.data);
-    res.status(200).send("OK – data loggad i konsol");
-  } catch (error) {
-    console.error("❌ Fel vid anrop till Eventor:", error.message);
-    res.status(500).send("Fel vid anrop till Eventor");
-  }
-});
+    const xmlData = response.data;
+    const parsed = await parser.parseStringPromise(xmlData);
 
-module.exports = router;
+    const events = parsed?.ArrayOfEvent?.Event || [];
+    const list = Array.isArray(events) ? events : [events];
+
+    console.log("✅ Antal tävlingar:", list.length);
+    list.forEach(ev => {
+      const id = ev.EventId || "okänd ID";
+      const name = ev.Name || "okänt namn";
+      const start = ev.StartTime || "okänt datum";
+      console.log(`📅 ${id} – ${name} (${start})`);
+    });
+
+    res.status(200).send(`Parsed ${list.length} tävlingar – se logg`);
+  } catch (error) {
+    console.error("❌ Fel vid anrop/parsin
