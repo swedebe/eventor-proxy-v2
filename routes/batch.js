@@ -32,14 +32,14 @@ router.get("/test-eventor-anrop", async (req, res) => {
     const xmlData = response.data;
     const parsed = await parser.parseStringPromise(xmlData);
 
-    const events = parsed?.ArrayOfEvent?.Event || [];
+    const events = parsed?.EventList?.Event || [];
     const list = Array.isArray(events) ? events : [events];
 
     console.log("Antal tävlingar:", list.length);
     list.forEach(ev => {
       const id = ev.EventId || "okänd ID";
       const name = ev.Name || "okänt namn";
-      const start = ev.StartTime || "okänt datum";
+      const start = ev.StartDate?.Date || "okänt datum";
       console.log(`${id} – ${name} (${start})`);
     });
 
