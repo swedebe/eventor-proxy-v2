@@ -49,10 +49,21 @@ router.post("/update-results", async (req, res) => {
       console.log(`🧾 XML-svar från Eventor:\n${xml.substring(0, 1000)}...`);
 
       const parsed = await parser.parseStringPromise(xml);
+
+      // 💡 Nytt: logga om Events saknas helt
+      if (!parsed?.Events) {
+        console.log("⚠️ parsed.Events saknas i svaret:", parsed);
+      }
+
       const eventsRaw = parsed?.Events?.Event || [];
       const events = Array.isArray(eventsRaw) ? eventsRaw : [eventsRaw];
 
       console.log(`📊 Totalt antal event innan filtrering: ${events.length}`);
+
+      if (events.length === 0) {
+        console.log("🔍 Inga events hittades. Rådata:", parsed?.Events);
+      }
+
       console.log(events.map(e => ({
         eventId: e.EventId,
         name: e.Name,
