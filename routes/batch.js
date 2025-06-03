@@ -16,9 +16,9 @@ router.post("/update-results", async (req, res) => {
     return res.status(400).json({ error: "Missing organisationId" });
   }
 
-  const apiKey = process.env.API_KEY;
+  const apiKey = process.env.EVENTOR_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: "Missing API_KEY in environment" });
+    return res.status(500).json({ error: "Missing EVENTOR_API_KEY in environment" });
   }
 
   const today = new Date();
@@ -46,11 +46,10 @@ router.post("/update-results", async (req, res) => {
         responseType: "text"
       });
 
-      console.log(`🧾 XML-svar från Eventor:\n${xml.substring(0, 1000)}...`);
+      console.log(`🧾 XML-svar från Eventor:\n${xml?.substring(0, 1000) || "[TOMT SVAR]"}\n---- SLUT PÅ XML ----`);
 
       const parsed = await parser.parseStringPromise(xml);
 
-      // 💡 Nytt: logga om Events saknas helt
       if (!parsed?.Events) {
         console.log("⚠️ parsed.Events saknas i svaret:", parsed);
       }
@@ -99,6 +98,7 @@ router.post("/update-results", async (req, res) => {
             status: "ok"
           });
         } catch (err) {
+          console.log(`❌ Fel vid hämtning av resultat för event ${eventId}:`, err?.response?.status, err?.response?.data || err.message);
           errors.push({
             eventId,
             eventName,
@@ -107,6 +107,7 @@ router.post("/update-results", async (req, res) => {
         }
       }
     } catch (err) {
+      console.log("❌ FEL VID ANROP AV EVENTS:", err?.response?.status, err?.response?.data || err.message);
       errors.push({
         interval: `${from.toISOString()} to ${to.toISOString()}`,
         error: err.response?.statusText || err.message,
