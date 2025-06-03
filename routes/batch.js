@@ -4,7 +4,6 @@ const router = express.Router();
 
 const BASE_URL = "https://eventor.orientering.se/api";
 
-// Formaterar datum till "YYYY-MM-DD 00:00:00"
 function formatDate(date) {
   return date.toISOString().split("T")[0] + " 00:00:00";
 }
@@ -15,9 +14,9 @@ router.post("/update-results", async (req, res) => {
     return res.status(400).json({ error: "Missing organisationId" });
   }
 
-  const apiKey = process.env.EVENTOR_API_KEY;
+  const apiKey = process.env.API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: "Missing EVENTOR_API_KEY in environment" });
+    return res.status(500).json({ error: "Missing API_KEY in environment" });
   }
 
   const today = new Date();
@@ -34,7 +33,10 @@ router.post("/update-results", async (req, res) => {
     const to = new Date(from);
     to.setDate(from.getDate() + 4);
 
-    const url = `${BASE_URL}/events?fromDate=${encodeURIComponent(formatDate(from))}&toDate=${encodeURIComponent(formatDate(to))}&EventStatusId=3`;
+    const url = `${BASE_URL}/events?fromDate=${encodeURIComponent(formatDate(from))}&toDate=${encodeURIComponent(formatDate(to))}&classificationIds=1,2,3,6&EventStatusId=3`;
+
+    console.log(`\n📆 Interval: ${formatDate(from)} → ${formatDate(to)}`);
+    console.log(`🔗 Anropar Eventor: ${url}`);
 
     try {
       const { data } = await axios.get(url, {
@@ -43,17 +45,14 @@ router.post("/update-results", async (req, res) => {
 
       const eventsRaw = data?.Event || [];
       const events = Array.isArray(eventsRaw) ? eventsRaw : [eventsRaw];
-      console.log(`Interval: ${formatDate(from)} → ${formatDate(to)}`);
-      console.log(`Totalt antal event innan filtrering: ${events.length}`);
+
+      console.log(`📊 Totalt antal event innan filtrering: ${events.length}`);
       console.log(events.map(e => ({
         eventId: e.EventId,
         name: e.Name,
         classificationId: e.EventClassificationId?.value,
-        statusId: e.EventStatusId?.value,
-        start: e.StartDate?.Date,
-        end: e.EndDate?.Date
+        statusId: e.EventStatusId?.value
       })));
-
 
       const relevantEvents = events.filter(e =>
         [1, 2, 3, 6].includes(Number(e.EventClassificationId?.value || -1))
@@ -63,6 +62,9 @@ router.post("/update-results", async (req, res) => {
         const eventId = event.EventId;
         const eventName = event.Name;
         const resultUrl = `${BASE_URL}/results/organisation?organisationIds=${organisationId}&eventId=${eventId}`;
+
+        console.log(`📥 Hämtar resultat för eventId ${eventId}: ${eventName}`);
+        console.log(`🔗 Anropar Eventor: ${resultUrl}`);
 
         try {
           const resultResponse = await axios.get(resultUrl, {
