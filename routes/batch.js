@@ -1,8 +1,10 @@
 const express = require("express");
 const axios = require("axios");
+const xml2js = require("xml2js");
 const router = express.Router();
 
 const PROXY_BASE_URL = process.env.SELF_BASE_URL || "http://localhost:3000/api";
+const parser = new xml2js.Parser({ explicitArray: false });
 
 function formatDate(date) {
   return date.toISOString().split("T")[0] + " 00:00:00";
@@ -39,11 +41,13 @@ router.post("/update-results", async (req, res) => {
     console.log(`🔗 Anropar via proxy: ${url}`);
 
     try {
-      const { data } = await axios.get(url, {
+      const { data: xml } = await axios.get(url, {
         headers: { ApiKey: apiKey },
+        responseType: "text"
       });
 
-      const eventsRaw = data?.Event || [];
+      const parsed = await parser.parseStringPromise(xml);
+      const eventsRaw = parsed?.Events?.Event || [];
       const events = Array.isArray(eventsRaw) ? eventsRaw : [eventsRaw];
 
       console.log(`📊 Totalt antal event innan filtrering: ${events.length}`);
@@ -67,12 +71,13 @@ router.post("/update-results", async (req, res) => {
         console.log(`🔗 Anropar via proxy: ${resultUrl}`);
 
         try {
-          const resultResponse = await axios.get(resultUrl, {
+          const { data: resultXml } = await axios.get(resultUrl, {
             headers: { ApiKey: apiKey },
+            responseType: "text"
           });
 
-          const content = resultResponse.data;
-          const count = JSON.stringify(content).length;
+          const parsedResult = await parser.parseStringPromise(resultXml);
+          const count = JSON.stringify(parsedResult).length;
 
           results.push({
             eventId,
