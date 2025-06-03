@@ -2,7 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const router = express.Router();
 
-const BASE_URL = "https://eventor.orientering.se/api";
+const PROXY_BASE_URL = process.env.SELF_BASE_URL || "http://localhost:3000/api";
 
 function formatDate(date) {
   return date.toISOString().split("T")[0] + " 00:00:00";
@@ -33,10 +33,10 @@ router.post("/update-results", async (req, res) => {
     const to = new Date(from);
     to.setDate(from.getDate() + 4);
 
-    const url = `${BASE_URL}/events?fromDate=${encodeURIComponent(formatDate(from))}&toDate=${encodeURIComponent(formatDate(to))}&classificationIds=1,2,3,6&EventStatusId=3`;
+    const url = `${PROXY_BASE_URL}/events?fromDate=${encodeURIComponent(formatDate(from))}&toDate=${encodeURIComponent(formatDate(to))}&classificationIds=1,2,3,6&EventStatusId=3`;
 
     console.log(`\n📆 Interval: ${formatDate(from)} → ${formatDate(to)}`);
-    console.log(`🔗 Anropar Eventor: ${url}`);
+    console.log(`🔗 Anropar via proxy: ${url}`);
 
     try {
       const { data } = await axios.get(url, {
@@ -61,10 +61,10 @@ router.post("/update-results", async (req, res) => {
       for (const event of relevantEvents) {
         const eventId = event.EventId;
         const eventName = event.Name;
-        const resultUrl = `${BASE_URL}/results/organisation?organisationIds=${organisationId}&eventId=${eventId}`;
+        const resultUrl = `${PROXY_BASE_URL}/results/organisation?organisationIds=${organisationId}&eventId=${eventId}`;
 
         console.log(`📥 Hämtar resultat för eventId ${eventId}: ${eventName}`);
-        console.log(`🔗 Anropar Eventor: ${resultUrl}`);
+        console.log(`🔗 Anropar via proxy: ${resultUrl}`);
 
         try {
           const resultResponse = await axios.get(resultUrl, {
