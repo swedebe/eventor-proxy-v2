@@ -43,6 +43,17 @@ router.post("/update-results", async (req, res) => {
 
       const eventsRaw = data?.Event || [];
       const events = Array.isArray(eventsRaw) ? eventsRaw : [eventsRaw];
+      console.log(`Interval: ${formatDate(from)} → ${formatDate(to)}`);
+      console.log(`Totalt antal event innan filtrering: ${events.length}`);
+      console.log(events.map(e => ({
+        eventId: e.EventId,
+        name: e.Name,
+        classificationId: e.EventClassificationId?.value,
+        statusId: e.EventStatusId?.value,
+        start: e.StartDate?.Date,
+        end: e.EndDate?.Date
+      })));
+
 
       const relevantEvents = events.filter(e =>
         [1, 2, 3, 6].includes(Number(e.EventClassificationId?.value || -1))
