@@ -1,10 +1,16 @@
-import express from 'express'
-import axios from 'axios'
-import dotenv from 'dotenv'
+const express = require('express')
+const axios = require('axios')
+const dotenv = require('dotenv')
+const batchRouter = require('./routes/batch') // ← CommonJS-import
 dotenv.config()
 
 const app = express()
 const PORT = process.env.PORT || 3000
+
+app.use(express.json()) // Viktigt för att POST-anrop ska funka
+
+// 🆕 Koppla in batch-endpointen
+app.use('/batch', batchRouter)
 
 app.get('/api/*', async (req, res) => {
   const path = req.originalUrl.replace('/api', '')
