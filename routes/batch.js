@@ -46,6 +46,8 @@ router.post("/update-results", async (req, res) => {
         responseType: "text"
       });
 
+      console.log(`🧾 XML-svar från Eventor:\n${xml.substring(0, 1000)}...`);
+
       const parsed = await parser.parseStringPromise(xml);
       const eventsRaw = parsed?.Events?.Event || [];
       const events = Array.isArray(eventsRaw) ? eventsRaw : [eventsRaw];
