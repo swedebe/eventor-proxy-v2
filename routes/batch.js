@@ -6,7 +6,6 @@ const eventorClient = require("../lib/eventorClient");
 
 const router = express.Router();
 
-// Uppdatera tävlingar från Eventor och spara till Supabase
 router.post("/update-events", async (req, res) => {
   const organisationId = req.body.organisationId;
   if (!organisationId) {
@@ -33,15 +32,24 @@ router.post("/update-events", async (req, res) => {
     const parser = new xml2js.Parser({ explicitArray: false });
     const parsed = await parser.parseStringPromise(xml);
 
-    const events = parsed.ArrayOfEvent?.Event || [];
-    const flat = Array.isArray(events) ? events : [events];
+    const eventsRaw = parsed.ArrayOfEvent?.Event;
+    const flat = Array.isArray(eventsRaw) ? eventsRaw : eventsRaw ? [eventsRaw] : [];
+
+    const debugInfo = {
+      antalEventobjekt: flat.length,
+      eventIdFörsta: flat[0]?.EventId,
+      eventNamnFörsta: flat[0]?.Name,
+      eventRaceCountFörsta: Array.isArray(flat[0]?.EventRace)
+        ? flat[0].EventRace.length
+        : flat[0]?.EventRace ? 1 : 0
+    };
 
     const rows = flat.flatMap(event => {
       const organiser = event.Organiser?.Name;
       const organiserNames = Array.isArray(organiser) ? organiser.join(", ") : organiser || "";
 
       const races = event.EventRace;
-      const raceArray = Array.isArray(races) ? races : [races];
+      const raceArray = Array.isArray(races) ? races : races ? [races] : [];
 
       return raceArray.map(race => ({
         eventid: parseInt(event.EventId),
@@ -68,7 +76,8 @@ router.post("/update-events", async (req, res) => {
 
     return res.status(200).json({
       message: `Sparade ${rows.length} tävlingar till Supabase`,
-      antal: rows.length
+      antal: rows.length,
+      debug: debugInfo
     });
 
   } catch (error) {
