@@ -1,97 +1,77 @@
 const express = require("express");
 const axios = require("axios");
-const xml2js = require("xml2js");
 const { createClient } = require("@supabase/supabase-js");
+const xml2js = require("xml2js");
 
 const router = express.Router();
 const parser = new xml2js.Parser({ explicitArray: false });
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const formatDate = (date) => {
+  return date.toISOString().split("T")[0] + " 00:00:00";
+};
 
 router.get("/test-eventor-anrop", async (req, res) => {
-  const apiKey = process.env.EVENTOR_API_KEY;
+  await supabase.from("testlog").insert({ message: "Render can write!" });
+  res.status(200).send("OK – testlog försökt");
+});
 
-  const fromDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .split("T")[0] + " 00:00:00";
-  const toDate = new Date()
-    .toISOString()
-    .split("T")[0] + " 23:59:59";
-
-  const url = `https://eventor.orientering.se/api/events?fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}&classificationIds=1,2,3,6&EventStatusId=3`;
+router.get("/test", async (req, res) => {
+  const organisationId = 54; // valfri
+  const fromDate = formatDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+  const toDate = formatDate(new Date());
+  const url = `https://eventor.orientering.se/api/events?fromDate=${fromDate}&toDate=${toDate}&classificationIds=1,2,3,6&EventStatusId=3`;
 
   try {
     const response = await axios.get(url, {
       headers: {
-        "ApiKey": apiKey,
-        "Accept": "*/*",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "User-Agent": "PostmanRuntime/7.44.0",
+        ApiKey: process.env.EVENTOR_API_KEY,
       },
       responseType: "text",
     });
 
-    const xmlData = response.data;
-    const parsed = await parser.parseStringPromise(xmlData);
+    const parsed = await parser.parseStringPromise(response.data);
+    const events = parsed?.EventList?.Event;
 
-    const events = parsed?.EventList?.Event || [];
     const list = Array.isArray(events) ? events : [events];
-    console.log("Antal tävlingar att bearbeta:", list.length);
+    const subset = list.slice(0, 5); // ✅ begränsa till 5 tävlingar
+    console.log("Antal tävlingar att bearbeta:", subset.length);
 
     let addedCount = 0;
-    for (const event of list) {
-      const eventId = parseInt(event.EventId);
-      const eventName = event.Name || null;
-      const eventClassificationId = parseInt(event.EventClassificationId || 0);
+    for (const event of subset) {
+      const eventRace = Array.isArray(event.EventRace)
+        ? event.EventRace[0]
+        : event.EventRace;
 
-      const organisers = event.Organiser
-        ? Array.isArray(event.Organiser)
-          ? event.Organiser.map(o => o.OrganisationId).join(",")
-          : event.Organiser.OrganisationId
-        : null;
+      const data = {
+        eventId: parseInt(event.EventId),
+        eventRaceId: parseInt(eventRace.EventRaceId),
+        eventDate: eventRace.RaceDate?.Date || null,
+        eventName: event.Name || null,
+        eventOrganiser: Array.isArray(event.Organiser?.OrganisationId)
+          ? event.Organiser.OrganisationId[0]
+          : event.Organiser?.OrganisationId || null,
+        eventDistance: eventRace.WRSInfo?.Distance || null,
+        eventClassificationId: parseInt(event.EventClassificationId),
+      };
 
-      const eventRaces = Array.isArray(event.EventRace)
-        ? event.EventRace
-        : [event.EventRace];
+      console.log("Försöker spara:", data);
 
-      for (const race of eventRaces) {
-        const eventRaceId = parseInt(race.EventRaceId);
-        const eventDate = race.RaceDate?.Date || null;
-        const distance = race.WRSInfo?.Distance || null;
-
-        const insertPayload = {
-          eventId,
-          eventRaceId,
-          eventDate,
-          eventName,
-          eventOrganiser: organisers,
-          eventDistance: distance,
-          eventClassificationId,
-        };
-
-        console.log("Försöker spara:", JSON.stringify(insertPayload));
-
-        const { error: insertError } = await supabase
-          .from("Events")
-          .insert(insertPayload);
-
-        if (insertError) {
-          console.error(`Fel vid insert för race ${eventRaceId}:`, insertError.message || insertError);
-        } else {
-          console.log(`✅ Sparade tävling ${eventRaceId} – ${eventName}`);
-          addedCount++;
-        }
+      const { error } = await supabase.from("events").insert(data);
+      if (error) {
+        console.error(`Fel vid insert för race ${data.eventRaceId}:`, error);
+      } else {
+        addedCount++;
       }
     }
 
-    res.status(200).send(`Bearbetade ${list.length} tävlingar, ${addedCount} nya sparade.`);
-  } catch (error) {
-    console.error("❌ Fel vid anrop eller parsing:", error.message);
-    res.status(500).send("Fel vid anrop eller parsing");
+    res.status(200).send(`✅ Klar. Tillagda: ${addedCount}`);
+  } catch (err) {
+    console.error("Fel vid anrop/parsing:", err.message);
+    res.status(500).send("Något gick fel vid hämtning eller parsing.");
   }
 });
 
