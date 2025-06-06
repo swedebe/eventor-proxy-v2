@@ -1,17 +1,10 @@
 const express = require("express");
 const axios = require("axios");
-const { createClient } = require("@supabase/supabase-js");
 const { v4: uuidv4 } = require("uuid");
+const supabase = require("../lib/supabaseClient");
 
 const router = express.Router();
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const EVENTOR_API_KEY = process.env.EVENTOR_API_KEY;
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-// Testanrop som loggar till tabellen logdata
 router.post("/batch/test-eventor-anrop", async (req, res) => {
   const organisationId = req.body.organisationId;
   if (!organisationId) {
@@ -36,7 +29,7 @@ router.post("/batch/test-eventor-anrop", async (req, res) => {
   try {
     const response = await axios.get(eventorUrl, {
       headers: {
-        ApiKey: EVENTOR_API_KEY,
+        ApiKey: process.env.EVENTOR_API_KEY,
         Accept: "application/xml"
       },
       timeout: 15000
