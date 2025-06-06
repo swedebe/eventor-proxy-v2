@@ -114,7 +114,7 @@ router.post("/update-events", async (req, res) => {
       }));
     });
 
-    const { error: upsertError } = await supabase.from("tävlingar")
+    const { error: upsertError } = await supabase.from("events")
       .upsert(rows, { onConflict: ["eventraceid"] });
 
     if (upsertError) {
