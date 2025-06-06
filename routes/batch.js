@@ -46,9 +46,9 @@ router.post("/update-events", async (req, res) => {
         eventid: parseInt(event.EventId),
         eventraceid: parseInt(race.EventRaceId),
         eventdate: race.RaceDate?.Date,
-        event_name: event.Name,
-        event_organiser: organiserNames,
-        event_distance: race.WRSInfo?.Distance,
+        eventname: event.Name,
+        eventorganiser: organiserNames,
+        eventdistance: race.WRSInfo?.Distance,
         eventclassificationid: parseInt(event.EventClassificationId)
       }));
     });
