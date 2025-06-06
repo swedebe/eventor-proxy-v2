@@ -1,61 +1,92 @@
-// routes/batch.js
-const express = require('express');
+const express = require("express");
+const axios = require("axios");
+const { createClient } = require("@supabase/supabase-js");
+const { v4: uuidv4 } = require("uuid");
+
 const router = express.Router();
-const axios = require('axios');
-const xml2js = require('xml2js');
-const { createClient } = require('@supabase/supabase-js');
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const EVENTOR_API_KEY = process.env.EVENTOR_API_KEY;
 
-const parser = new xml2js.Parser({ explicitArray: false });
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-router.get('/test-eventor-anrop', async (req, res) => {
-  const from = '2025-05-01 00:00:00';
-  const to = '2025-05-05 23:59:59';
-  const url = `${process.env.SELF_BASE_URL}/api/events?fromDate=${encodeURIComponent(from)}&toDate=${encodeURIComponent(to)}&classificationIds=1,2,3,6&EventStatusId=3`;
+// Testanrop som loggar till tabellen logdata
+router.post("/batch/test-eventor-anrop", async (req, res) => {
+  const organisationId = req.body.organisationId;
+  if (!organisationId) {
+    return res.status(400).json({ error: "organisationId saknas" });
+  }
+
+  const batchid = uuidv4();
+  const eventorUrl = `https://eventor.orientering.se/api/events?organisationId=${organisationId}&classificationIds=1,2,3,6`;
+
+  // Logg: start
+  const { error: logStartError } = await supabase.from("logdata").insert({
+    batchid,
+    started: new Date().toISOString(),
+    request: eventorUrl
+  });
+
+  if (logStartError) {
+    console.error("Kunde inte logga start:", logStartError);
+    return res.status(500).json({ error: "Fel vid loggstart" });
+  }
 
   try {
-    const response = await axios.get(url, {
-      headers: { ApiKey: process.env.EVENTOR_API_KEY },
-      responseType: 'text',
+    const response = await axios.get(eventorUrl, {
+      headers: {
+        ApiKey: EVENTOR_API_KEY,
+        Accept: "application/xml"
+      },
+      timeout: 15000
     });
 
-    const result = await parser.parseStringPromise(response.data);
-    const events = result.EventList?.Event || [];
-    const eventsArray = Array.isArray(events) ? events : [events];
-    console.log('Antal tävlingar att bearbeta:', eventsArray.length);
+    const responsecode = `${response.status} ${response.statusText}`;
 
-    for (const event of eventsArray.slice(0, 5)) {
-      const data = {
-        eventid: parseInt(event.EventId),
-        eventraceid: parseInt(event.EventRace?.EventRaceId || 0),
-        eventdate: event.EventRace?.RaceDate?.Date || null,
-        eventname: event.Name || null,
-        eventorganiser: Array.isArray(event.Organiser?.OrganisationId)
-          ? event.Organiser.OrganisationId[0]
-          : event.Organiser?.OrganisationId || null,
-        eventdistance: event.EventRace?.WRSInfo?.Distance || null,
-        eventclassificationid: parseInt(event.EventClassificationId || 0),
-      };
+    // Logg: slutförd
+    const { error: logCompleteError } = await supabase.from("logdata").update({
+      completed: new Date().toISOString(),
+      responsecode
+    }).eq("batchid", batchid);
 
-      console.log('Försöker spara:', data);
-
-      const { error } = await supabase.from('events').insert(data);
-      if (error) {
-        console.log(`Fel vid insert för race ${data.eventraceid}: ${error.message}`);
-      } else {
-        console.log(`Sparad race ${data.eventraceid}`);
-      }
+    if (logCompleteError) {
+      console.error("Kunde inte logga slutförande:", logCompleteError);
     }
 
-    await supabase.from('testlog').insert({ message: 'Insertförsök till events klar' });
-    res.send('Insertförsök till events klar – se logg');
-  } catch (err) {
-    console.error('Fel vid anrop/parsing:', err.message);
-    res.status(500).send('Fel vid hämtning eller parsing');
+    return res.status(200).json({
+      message: "Anrop genomfört och loggat",
+      responsecode,
+      data: response.data
+    });
+
+  } catch (error) {
+    let responsecode = "N/A";
+    let errormessage = error.message;
+
+    if (error.response) {
+      responsecode = `${error.response.status} ${error.response.statusText}`;
+      errormessage = typeof error.response.data === "string"
+        ? error.response.data.slice(0, 500)
+        : JSON.stringify(error.response.data).slice(0, 500);
+    }
+
+    // Logg: fel
+    const { error: logError } = await supabase.from("logdata").update({
+      completed: new Date().toISOString(),
+      responsecode,
+      errormessage
+    }).eq("batchid", batchid);
+
+    if (logError) {
+      console.error("Kunde inte logga fel:", logError);
+    }
+
+    return res.status(500).json({
+      error: "Fel vid anrop till Eventor",
+      responsecode,
+      errormessage
+    });
   }
 });
 
