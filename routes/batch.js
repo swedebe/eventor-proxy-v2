@@ -6,66 +6,6 @@ const eventorClient = require("../lib/eventorClient");
 
 const router = express.Router();
 
-// Testanrop mot Eventor
-router.post("/test-eventor-anrop", async (req, res) => {
-  const organisationId = req.body.organisationId;
-  if (!organisationId) {
-    return res.status(400).json({ error: "organisationId saknas" });
-  }
-
-  const batchid = uuidv4();
-  const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const toDate = new Date().toISOString().slice(0, 10);
-
-  const eventorPath = `events?organisationId=${organisationId}&classificationIds=1,2,3,6&fromDate=${fromDate}&toDate=${toDate}`;
-  const fullUrl = `https://eventor.orientering.se/api/${eventorPath}`;
-
-  await supabase.from("logdata").insert({
-    batchid,
-    started: new Date().toISOString(),
-    request: fullUrl
-  });
-
-  try {
-    const response = await eventorClient.get(eventorPath);
-    const responsecode = `${response.status} ${response.statusText}`;
-
-    await supabase.from("logdata").update({
-      completed: new Date().toISOString(),
-      responsecode
-    }).eq("batchid", batchid);
-
-    return res.status(200).json({
-      message: "Anrop genomfört och loggat",
-      responsecode,
-      data: response.data
-    });
-
-  } catch (error) {
-    let responsecode = "N/A";
-    let errormessage = error.message;
-
-    if (error.response) {
-      responsecode = `${error.response.status} ${error.response.statusText}`;
-      errormessage = typeof error.response.data === "string"
-        ? error.response.data.slice(0, 500)
-        : JSON.stringify(error.response.data).slice(0, 500);
-    }
-
-    await supabase.from("logdata").update({
-      completed: new Date().toISOString(),
-      responsecode,
-      errormessage
-    }).eq("batchid", batchid);
-
-    return res.status(500).json({
-      error: "Fel vid anrop till Eventor",
-      responsecode,
-      errormessage
-    });
-  }
-});
-
 // Uppdatera tävlingar från Eventor och spara till Supabase
 router.post("/update-events", async (req, res) => {
   const organisationId = req.body.organisationId;
@@ -74,10 +14,10 @@ router.post("/update-events", async (req, res) => {
   }
 
   const batchid = uuidv4();
-  const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const fromDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const toDate = new Date().toISOString().slice(0, 10);
 
-  const eventorPath = `events?organisationId=${organisationId}&classificationIds=1,2,3,6&fromDate=${fromDate}&toDate=${toDate}`;
+  const eventorPath = `events?classificationIds=1,2,3,6&fromDate=${fromDate}&toDate=${toDate}`;
   const fullUrl = `https://eventor.orientering.se/api/${eventorPath}`;
 
   await supabase.from("logdata").insert({
