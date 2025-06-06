@@ -13,7 +13,7 @@ router.post("/update-events", async (req, res) => {
   }
 
   const batchid = uuidv4();
-  const fromDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const toDate = new Date().toISOString().slice(0, 10);
 
   const eventorPath = `events?classificationIds=1,2,3,6&fromDate=${fromDate}&toDate=${toDate}`;
@@ -34,15 +34,6 @@ router.post("/update-events", async (req, res) => {
 
     const eventsRaw = parsed.ArrayOfEvent?.Event;
     const flat = Array.isArray(eventsRaw) ? eventsRaw : eventsRaw ? [eventsRaw] : [];
-
-    const debugInfo = {
-      antalEventobjekt: flat.length,
-      eventIdFörsta: flat[0]?.EventId,
-      eventNamnFörsta: flat[0]?.Name,
-      eventRaceCountFörsta: Array.isArray(flat[0]?.EventRace)
-        ? flat[0].EventRace.length
-        : flat[0]?.EventRace ? 1 : 0
-    };
 
     const rows = flat.flatMap(event => {
       const organiser = event.Organiser?.Name;
@@ -77,7 +68,10 @@ router.post("/update-events", async (req, res) => {
     return res.status(200).json({
       message: `Sparade ${rows.length} tävlingar till Supabase`,
       antal: rows.length,
-      debug: debugInfo
+      debug: {
+        xmlRådata: xml.slice(0, 2000),
+        antalEventobjekt: flat.length
+      }
     });
 
   } catch (error) {
