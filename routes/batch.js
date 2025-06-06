@@ -63,7 +63,6 @@ router.get("/test-eventor-anrop", async (req, res) => {
         const eventDate = race.RaceDate?.Date || null;
         const distance = race.WRSInfo?.Distance || null;
 
-        // Kontrollera om denna redan finns
         const { data: existing, error: fetchError } = await supabase
           .from("Events")
           .select("eventRaceId")
@@ -86,7 +85,7 @@ router.get("/test-eventor-anrop", async (req, res) => {
         });
 
         if (insertError) {
-          console.error(`Fel vid insert för race ${eventRaceId}:`, insertError.message);
+          console.error(`Fel vid insert för race ${eventRaceId}:`, JSON.stringify(insertError, null, 2));
         } else {
           console.log(`Sparade tävling ${eventRaceId} – ${eventName}`);
           addedCount++;
