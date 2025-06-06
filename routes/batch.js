@@ -74,18 +74,23 @@ router.get("/test-eventor-anrop", async (req, res) => {
           continue;
         }
 
-        const { error: insertError } = await supabase.from("Events").insert({
-          eventId,
-          eventRaceId,
-          eventDate,
-          eventName,
-          eventOrganiser: organisers,
-          eventDistance: distance,
-          eventClassificationId,
-        });
+        const { data: insertData, error: insertError } = await supabase
+          .from("Events")
+          .insert({
+            eventId,
+            eventRaceId,
+            eventDate,
+            eventName,
+            eventOrganiser: organisers,
+            eventDistance: distance,
+            eventClassificationId,
+          })
+          .select();
 
         if (insertError) {
-          console.error(`Fel vid insert för race ${eventRaceId}:`, JSON.stringify(insertError, null, 2));
+          console.error(`Fel vid insert för race ${eventRaceId}:`, insertError.message || insertError);
+        } else if (!insertData) {
+          console.error(`Insert misslyckades utan fel för race ${eventRaceId}`);
         } else {
           console.log(`Sparade tävling ${eventRaceId} – ${eventName}`);
           addedCount++;
