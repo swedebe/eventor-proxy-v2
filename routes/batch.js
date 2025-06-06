@@ -32,7 +32,7 @@ router.post("/update-events", async (req, res) => {
     const parser = new xml2js.Parser({ explicitArray: false });
     const parsed = await parser.parseStringPromise(xml);
 
-    const eventsRaw = parsed.ArrayOfEvent?.Event;
+    const eventsRaw = parsed.EventList?.Event;
     const flat = Array.isArray(eventsRaw) ? eventsRaw : eventsRaw ? [eventsRaw] : [];
 
     const rows = flat.flatMap(event => {
@@ -45,10 +45,10 @@ router.post("/update-events", async (req, res) => {
       return raceArray.map(race => ({
         eventid: parseInt(event.EventId),
         eventraceid: parseInt(race.EventRaceId),
-        eventdate: race.Start.Date,
+        eventdate: race.RaceDate?.Date,
         event_name: event.Name,
         event_organiser: organiserNames,
-        event_distance: event.EventForm?.Distance,
+        event_distance: race.WRSInfo?.Distance,
         eventclassificationid: parseInt(event.EventClassificationId)
       }));
     });
