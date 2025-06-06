@@ -13,8 +13,8 @@ router.post("/update-events", async (req, res) => {
   }
 
   const batchid = uuidv4();
-  const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const toDate = new Date().toISOString().slice(0, 10);
+  const fromDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
   const eventorPath = `events?classificationIds=1,2,3,6&fromDate=${fromDate}&toDate=${toDate}`;
   const fullUrl = `https://eventor.orientering.se/api/${eventorPath}`;
@@ -67,11 +67,7 @@ router.post("/update-events", async (req, res) => {
 
     return res.status(200).json({
       message: `Sparade ${rows.length} tävlingar till Supabase`,
-      antal: rows.length,
-      debug: {
-        xmlRådata: xml.slice(0, 2000),
-        antalEventobjekt: flat.length
-      }
+      antal: rows.length
     });
 
   } catch (error) {
