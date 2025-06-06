@@ -12,9 +12,6 @@ const supabase = createClient(
 );
 
 router.get("/test-eventor-anrop", async (req, res) => {
-  // TEST: Skriv en rad till testlog-tabellen
-  await supabase.from("testlog").insert({ message: "Render can write!" });
-
   const apiKey = process.env.EVENTOR_API_KEY;
 
   const fromDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
@@ -85,7 +82,7 @@ router.get("/test-eventor-anrop", async (req, res) => {
         if (insertError) {
           console.error(`Fel vid insert för race ${eventRaceId}:`, insertError.message || insertError);
         } else {
-          console.log(`Sparade tävling ${eventRaceId} – ${eventName}`);
+          console.log(`✅ Sparade tävling ${eventRaceId} – ${eventName}`);
           addedCount++;
         }
       }
@@ -93,7 +90,7 @@ router.get("/test-eventor-anrop", async (req, res) => {
 
     res.status(200).send(`Bearbetade ${list.length} tävlingar, ${addedCount} nya sparade.`);
   } catch (error) {
-    console.error("Fel vid anrop eller parsing:", error.message);
+    console.error("❌ Fel vid anrop eller parsing:", error.message);
     res.status(500).send("Fel vid anrop eller parsing");
   }
 });
