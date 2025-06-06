@@ -63,7 +63,7 @@ router.get("/test-eventor-anrop", async (req, res) => {
         const eventDate = race.RaceDate?.Date || null;
         const distance = race.WRSInfo?.Distance || null;
 
-        const { data: existing, error: fetchError } = await supabase
+        const { data: existing } = await supabase
           .from("Events")
           .select("eventRaceId")
           .eq("eventRaceId", eventRaceId)
@@ -74,17 +74,21 @@ router.get("/test-eventor-anrop", async (req, res) => {
           continue;
         }
 
+        const insertPayload = {
+          eventId,
+          eventRaceId,
+          eventDate,
+          eventName,
+          eventOrganiser: organisers,
+          eventDistance: distance,
+          eventClassificationId,
+        };
+
+        console.log("Försöker spara:", JSON.stringify(insertPayload));
+
         const { data: insertData, error: insertError } = await supabase
           .from("Events")
-          .insert({
-            eventId,
-            eventRaceId,
-            eventDate,
-            eventName,
-            eventOrganiser: organisers,
-            eventDistance: distance,
-            eventClassificationId,
-          })
+          .insert(insertPayload)
           .select();
 
         if (insertError) {
