@@ -14,11 +14,10 @@ router.post("/test-eventor-anrop", async (req, res) => {
   }
 
   const batchid = uuidv4();
-  const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
+  const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const toDate = new Date().toISOString().slice(0, 10);
 
-  const eventorPath = `events?organisationId=${organisationId}&classificationIds=1,2,3,6&fromDate=${fromDate}`;
+  const eventorPath = `events?organisationId=${organisationId}&classificationIds=1,2,3,6&fromDate=${fromDate}&toDate=${toDate}`;
   const fullUrl = `https://eventor.orientering.se/api/${eventorPath}`;
 
   await supabase.from("logdata").insert({
@@ -75,11 +74,10 @@ router.post("/update-events", async (req, res) => {
   }
 
   const batchid = uuidv4();
-  const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
+  const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const toDate = new Date().toISOString().slice(0, 10);
 
-  const eventorPath = `events?organisationId=${organisationId}&classificationIds=1,2,3,6&fromDate=${fromDate}`;
+  const eventorPath = `events?organisationId=${organisationId}&classificationIds=1,2,3,6&fromDate=${fromDate}&toDate=${toDate}`;
   const fullUrl = `https://eventor.orientering.se/api/${eventorPath}`;
 
   await supabase.from("logdata").insert({
