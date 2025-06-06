@@ -1,7 +1,7 @@
 const express = require("express");
-const axios = require("axios");
 const { v4: uuidv4 } = require("uuid");
 const supabase = require("../lib/supabaseClient");
+const eventorClient = require("../lib/eventorClient");
 
 const router = express.Router();
 
@@ -12,13 +12,14 @@ router.post("/batch/test-eventor-anrop", async (req, res) => {
   }
 
   const batchid = uuidv4();
-  const eventorUrl = `https://eventor.orientering.se/api/events?organisationId=${organisationId}&classificationIds=1,2,3,6`;
+  const eventorPath = `events?organisationId=${organisationId}&classificationIds=1,2,3,6`;
+  const fullUrl = `https://eventor.orientering.se/api/${eventorPath}`;
 
   // Logg: start
   const { error: logStartError } = await supabase.from("logdata").insert({
     batchid,
     started: new Date().toISOString(),
-    request: eventorUrl
+    request: fullUrl
   });
 
   if (logStartError) {
@@ -27,14 +28,7 @@ router.post("/batch/test-eventor-anrop", async (req, res) => {
   }
 
   try {
-    const response = await axios.get(eventorUrl, {
-      headers: {
-        ApiKey: process.env.EVENTOR_API_KEY,
-        Accept: "application/xml"
-      },
-      timeout: 15000
-    });
-
+    const response = await eventorClient.get(eventorPath);
     const responsecode = `${response.status} ${response.statusText}`;
 
     // Logg: slutförd
