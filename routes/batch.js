@@ -1,5 +1,3 @@
-await supabase.from("testlog").insert({ message: "Render can write!" });
-
 const express = require("express");
 const axios = require("axios");
 const xml2js = require("xml2js");
@@ -14,6 +12,9 @@ const supabase = createClient(
 );
 
 router.get("/test-eventor-anrop", async (req, res) => {
+  // TEST: Skriv en rad till testlog-tabellen
+  await supabase.from("testlog").insert({ message: "Render can write!" });
+
   const apiKey = process.env.EVENTOR_API_KEY;
 
   const fromDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
