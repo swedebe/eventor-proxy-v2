@@ -5,7 +5,7 @@ const eventorClient = require("../lib/eventorClient");
 
 const router = express.Router();
 
-router.post("/batch/test-eventor-anrop", async (req, res) => {
+router.post("/test-eventor-anrop", async (req, res) => {
   const organisationId = req.body.organisationId;
   if (!organisationId) {
     return res.status(400).json({ error: "organisationId saknas" });
