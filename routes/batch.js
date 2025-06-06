@@ -1,9 +1,15 @@
 const express = require("express");
 const axios = require("axios");
 const xml2js = require("xml2js");
+const { createClient } = require("@supabase/supabase-js");
 
 const router = express.Router();
 const parser = new xml2js.Parser({ explicitArray: false });
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
 router.get("/test-eventor-anrop", async (req, res) => {
   const apiKey = process.env.EVENTOR_API_KEY;
@@ -34,16 +40,61 @@ router.get("/test-eventor-anrop", async (req, res) => {
 
     const events = parsed?.EventList?.Event || [];
     const list = Array.isArray(events) ? events : [events];
+    console.log("Antal tävlingar att bearbeta:", list.length);
 
-    console.log("Antal tävlingar:", list.length);
-    list.forEach(ev => {
-      const id = ev.EventId || "okänd ID";
-      const name = ev.Name || "okänt namn";
-      const start = ev.StartDate?.Date || "okänt datum";
-      console.log(`${id} – ${name} (${start})`);
-    });
+    let addedCount = 0;
+    for (const event of list) {
+      const eventId = parseInt(event.EventId);
+      const eventName = event.Name || null;
+      const eventClassificationId = parseInt(event.EventClassificationId || 0);
 
-    res.status(200).send(`Parsed ${list.length} tävlingar – se logg`);
+      const organisers = event.Organiser
+        ? Array.isArray(event.Organiser)
+          ? event.Organiser.map(o => o.OrganisationId).join(",")
+          : event.Organiser.OrganisationId
+        : null;
+
+      const eventRaces = Array.isArray(event.EventRace)
+        ? event.EventRace
+        : [event.EventRace];
+
+      for (const race of eventRaces) {
+        const eventRaceId = parseInt(race.EventRaceId);
+        const eventDate = race.RaceDate?.Date || null;
+        const distance = race.WRSInfo?.Distance || null;
+
+        // Kontrollera om denna redan finns
+        const { data: existing, error: fetchError } = await supabase
+          .from("Events")
+          .select("eventRaceId")
+          .eq("eventRaceId", eventRaceId)
+          .maybeSingle();
+
+        if (existing) {
+          console.log(`Hoppar över befintlig tävling: ${eventRaceId}`);
+          continue;
+        }
+
+        const { error: insertError } = await supabase.from("Events").insert({
+          eventId,
+          eventRaceId,
+          eventDate,
+          eventName,
+          eventOrganiser: organisers,
+          eventDistance: distance,
+          eventClassificationId,
+        });
+
+        if (insertError) {
+          console.error(`Fel vid insert för race ${eventRaceId}:`, insertError.message);
+        } else {
+          console.log(`Sparade tävling ${eventRaceId} – ${eventName}`);
+          addedCount++;
+        }
+      }
+    }
+
+    res.status(200).send(`Bearbetade ${list.length} tävlingar, ${addedCount} nya sparade.`);
   } catch (error) {
     console.error("Fel vid anrop eller parsing:", error.message);
     res.status(500).send("Fel vid anrop eller parsing");
