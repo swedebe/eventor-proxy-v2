@@ -1,3 +1,5 @@
+await supabase.from("testlog").insert({ message: "Render can write!" });
+
 const express = require("express");
 const axios = require("axios");
 const xml2js = require("xml2js");
