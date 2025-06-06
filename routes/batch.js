@@ -63,17 +63,6 @@ router.get("/test-eventor-anrop", async (req, res) => {
         const eventDate = race.RaceDate?.Date || null;
         const distance = race.WRSInfo?.Distance || null;
 
-        const { data: existing } = await supabase
-          .from("Events")
-          .select("eventRaceId")
-          .eq("eventRaceId", eventRaceId)
-          .maybeSingle();
-
-        if (existing) {
-          console.log(`Hoppar över befintlig tävling: ${eventRaceId}`);
-          continue;
-        }
-
         const insertPayload = {
           eventId,
           eventRaceId,
@@ -86,15 +75,12 @@ router.get("/test-eventor-anrop", async (req, res) => {
 
         console.log("Försöker spara:", JSON.stringify(insertPayload));
 
-        const { data: insertData, error: insertError } = await supabase
+        const { error: insertError } = await supabase
           .from("Events")
-          .insert(insertPayload)
-          .select();
+          .insert(insertPayload);
 
         if (insertError) {
           console.error(`Fel vid insert för race ${eventRaceId}:`, insertError.message || insertError);
-        } else if (!insertData) {
-          console.error(`Insert misslyckades utan fel för race ${eventRaceId}`);
         } else {
           console.log(`Sparade tävling ${eventRaceId} – ${eventName}`);
           addedCount++;
