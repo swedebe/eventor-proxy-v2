@@ -1,10 +1,12 @@
 const express = require("express");
 const { v4: uuidv4 } = require("uuid");
+const xml2js = require("xml2js");
 const supabase = require("../lib/supabaseClient");
 const eventorClient = require("../lib/eventorClient");
 
 const router = express.Router();
 
+// Testanrop mot Eventor
 router.post("/test-eventor-anrop", async (req, res) => {
   const organisationId = req.body.organisationId;
   if (!organisationId) {
@@ -12,34 +14,27 @@ router.post("/test-eventor-anrop", async (req, res) => {
   }
 
   const batchid = uuidv4();
-  const eventorPath = `events?organisationId=${organisationId}&classificationIds=1,2,3,6`;
+  const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  const eventorPath = `events?organisationId=${organisationId}&classificationIds=1,2,3,6&fromDate=${fromDate}`;
   const fullUrl = `https://eventor.orientering.se/api/${eventorPath}`;
 
-  // Logg: start
-  const { error: logStartError } = await supabase.from("logdata").insert({
+  await supabase.from("logdata").insert({
     batchid,
     started: new Date().toISOString(),
     request: fullUrl
   });
 
-  if (logStartError) {
-    console.error("Kunde inte logga start:", logStartError);
-    return res.status(500).json({ error: "Fel vid loggstart" });
-  }
-
   try {
     const response = await eventorClient.get(eventorPath);
     const responsecode = `${response.status} ${response.statusText}`;
 
-    // Logg: slutförd
-    const { error: logCompleteError } = await supabase.from("logdata").update({
+    await supabase.from("logdata").update({
       completed: new Date().toISOString(),
       responsecode
     }).eq("batchid", batchid);
-
-    if (logCompleteError) {
-      console.error("Kunde inte logga slutförande:", logCompleteError);
-    }
 
     return res.status(200).json({
       message: "Anrop genomfört och loggat",
@@ -58,19 +53,101 @@ router.post("/test-eventor-anrop", async (req, res) => {
         : JSON.stringify(error.response.data).slice(0, 500);
     }
 
-    // Logg: fel
-    const { error: logError } = await supabase.from("logdata").update({
+    await supabase.from("logdata").update({
       completed: new Date().toISOString(),
       responsecode,
       errormessage
     }).eq("batchid", batchid);
 
-    if (logError) {
-      console.error("Kunde inte logga fel:", logError);
-    }
-
     return res.status(500).json({
       error: "Fel vid anrop till Eventor",
+      responsecode,
+      errormessage
+    });
+  }
+});
+
+// Uppdatera tävlingar från Eventor och spara till Supabase
+router.post("/update-events", async (req, res) => {
+  const organisationId = req.body.organisationId;
+  if (!organisationId) {
+    return res.status(400).json({ error: "organisationId saknas" });
+  }
+
+  const batchid = uuidv4();
+  const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  const eventorPath = `events?organisationId=${organisationId}&classificationIds=1,2,3,6&fromDate=${fromDate}`;
+  const fullUrl = `https://eventor.orientering.se/api/${eventorPath}`;
+
+  await supabase.from("logdata").insert({
+    batchid,
+    started: new Date().toISOString(),
+    request: fullUrl
+  });
+
+  try {
+    const response = await eventorClient.get(eventorPath);
+    const xml = response.data;
+
+    const parser = new xml2js.Parser({ explicitArray: false });
+    const parsed = await parser.parseStringPromise(xml);
+
+    const events = parsed.ArrayOfEvent?.Event || [];
+    const flat = Array.isArray(events) ? events : [events];
+
+    const rows = flat.flatMap(event => {
+      const organiser = event.Organiser?.Name;
+      const organiserNames = Array.isArray(organiser) ? organiser.join(", ") : organiser || "";
+
+      const races = event.EventRace;
+      const raceArray = Array.isArray(races) ? races : [races];
+
+      return raceArray.map(race => ({
+        eventid: parseInt(event.EventId),
+        eventraceid: parseInt(race.EventRaceId),
+        eventdate: race.Start.Date,
+        event_name: event.Name,
+        event_organiser: organiserNames,
+        event_distance: event.EventForm?.Distance,
+        eventclassificationid: parseInt(event.EventClassificationId)
+      }));
+    });
+
+    const { error: upsertError } = await supabase.from("tävlingar")
+      .upsert(rows, { onConflict: ["eventraceid"] });
+
+    if (upsertError) {
+      throw new Error(`Fel vid upsert: ${upsertError.message}`);
+    }
+
+    await supabase.from("logdata").update({
+      completed: new Date().toISOString(),
+      responsecode: `${response.status} ${response.statusText}`
+    }).eq("batchid", batchid);
+
+    return res.status(200).json({
+      message: `Sparade ${rows.length} tävlingar till Supabase`,
+      antal: rows.length
+    });
+
+  } catch (error) {
+    const responsecode = error.response
+      ? `${error.response.status} ${error.response.statusText}`
+      : "N/A";
+
+    const errormessage = error.message;
+
+    await supabase.from("logdata").update({
+      completed: new Date().toISOString(),
+      responsecode,
+      errormessage
+    }).eq("batchid", batchid);
+
+    return res.status(500).json({
+      error: "Fel vid update-events",
       responsecode,
       errormessage
     });
