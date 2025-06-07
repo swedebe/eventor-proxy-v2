@@ -15,7 +15,7 @@ const { convertTimeToSeconds, calculatePoints, calculateAge } = require("../src/
 const { validateApiKey, formatDate, sleep } = require("../src/helpers");
 const { v4: uuidv4 } = require("uuid");
 
-router.post("/batch/update-events", async (req, res) => {
+router.post("/update-events", async (req, res) => {
   const { organisationId, fromDate, toDate } = req.body;
   const apiKey = req.headers["x-api-key"];
   if (!validateApiKey(apiKey)) return res.status(401).json({ error: "Unauthorized" });
@@ -56,7 +56,7 @@ router.post("/batch/update-events", async (req, res) => {
   }
 });
 
-router.post("/batch/update-results", async (req, res) => {
+router.post("/update-results", async (req, res) => {
   const { organisationId } = req.body;
   const apiKey = req.headers["x-api-key"];
   if (!validateApiKey(apiKey)) return res.status(401).json({ error: "Unauthorized" });
