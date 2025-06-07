@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { getEvents, getResultsForEvent } = require("../eventorClient");
+const { getEvents, getResultsForEvent } = require("../src/eventorClient");
 const {
   saveEventsToSupabase,
   getEventsFromSupabase,
@@ -10,9 +10,9 @@ const {
   logRequest,
   startBatch,
   endBatch,
-} = require("../supabaseClient");
-const { convertTimeToSeconds, calculatePoints, calculateAge } = require("../utils");
-const { validateApiKey, formatDate, sleep } = require("../helpers");
+} = require("../src/supabaseClient");
+const { convertTimeToSeconds, calculatePoints, calculateAge } = require("../src/utils");
+const { validateApiKey, formatDate, sleep } = require("../src/helpers");
 const { v4: uuidv4 } = require("uuid");
 
 router.post("/batch/update-events", async (req, res) => {
