@@ -83,7 +83,12 @@ router.post("/update-results", async (req, res) => {
       let data;
       try {
         data = await getResultsForEvent(organisationId, eventid);
+        console.log("Antal resultat hämtade från Eventor:", data?.length || 0);
+        if (data?.length > 0) {
+          console.log("Första rad från Eventor-resultat:", JSON.stringify(data[0], null, 2));
+        }
       } catch (err) {
+        console.error("Fel vid getResultsForEvent", err);
         if (err.response?.status === 429) {
           await sleep(60000);
           data = await getResultsForEvent(organisationId, eventid);
@@ -121,7 +126,6 @@ router.post("/update-results", async (req, res) => {
         };
       });
 
-      // 🔍 Extra loggning innan insert
       console.log("Försöker spara resultat:");
       console.log("Antal resultat:", enrichedResults.length);
       if (enrichedResults.length > 0) {
