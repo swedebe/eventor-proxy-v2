@@ -6,12 +6,10 @@ const batchRouter = require('./routes/batch');
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT; // Obligatoriskt för Render
-
 app.use(express.json());
 
-// Batch-endpoint (vår egen kod)
-app.use('/batch', batchRouter);
+// Registrera alla batch-endpoints
+app.use("/batch", batchRouter);
 
 // Proxy mot Eventor API
 app.get('/api/*', async (req, res) => {
@@ -41,7 +39,12 @@ app.get('/', (req, res) => {
   res.send('Eventor proxy is running.');
 });
 
-// Starta servern
+// Fångar async-fel som annars dödar processen
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
