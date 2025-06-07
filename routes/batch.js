@@ -121,9 +121,18 @@ router.post("/update-results", async (req, res) => {
         };
       });
 
+      // 🔍 Extra loggning innan insert
+      console.log("Försöker spara resultat:");
+      console.log("Antal resultat:", enrichedResults.length);
+      if (enrichedResults.length > 0) {
+        console.log("Exempelrad:", JSON.stringify(enrichedResults[0], null, 2));
+      }
+
       try {
         await saveResultsToSupabase(enrichedResults);
       } catch (err) {
+        console.error("Fel vid saveResultsToSupabase");
+        console.error(err);
         await logRequest(batchid, anrop, 500, err?.message || "Unknown error", logId);
         throw err;
       }
