@@ -39,13 +39,19 @@ app.get('/', (req, res) => {
   res.send('Eventor proxy is running.');
 });
 
-// Global fångst av async-fel (med bättre loggning)
+// Global fångst av async-fel (utökad loggning)
 process.on("unhandledRejection", (reason, promise) => {
   console.error("UNHANDLED REJECTION:");
-  try {
-    console.error(JSON.stringify(reason, null, 2));
-  } catch {
-    console.error(reason);
+  if (reason instanceof Error) {
+    console.error("Error message:", reason.message);
+    console.error("Stack trace:", reason.stack);
+  } else {
+    console.error("Reason object (raw):", reason);
+    try {
+      console.error("Reason (stringified):", JSON.stringify(reason, null, 2));
+    } catch {
+      console.error("Reason could not be stringified.");
+    }
   }
 });
 
