@@ -19,7 +19,6 @@ router.post("/update-events", async (req, res) => {
 
   const batchid = uuidv4();
 
-  // Hantera datum
   const parseDate = (str) => new Date(str + "T00:00:00Z");
   const formatDate = (date) => date.toISOString().slice(0, 10);
 
@@ -55,12 +54,48 @@ router.post("/update-events", async (req, res) => {
       request: fullUrl
     });
 
-    try {
+    const fetchAndParse = async () => {
       const response = await eventorClient.get(eventorPath);
       const xml = response.data;
-
       const parser = new xml2js.Parser({ explicitArray: false });
       const parsed = await parser.parseStringPromise(xml);
+      return parsed;
+    };
+
+    try {
+      let parsed;
+      try {
+        parsed = await fetchAndParse();
+      } catch (error) {
+        if (error.response?.status === 429) {
+          // Vänta 60 sekunder och logga retry
+          await supabase.from("logdata").update({
+            handling: "Retry efter 429 (60s)"
+          }).eq("batchid", batchid).eq("request", fullUrl);
+
+          await new Promise(resolve => setTimeout(resolve, 60000)); // 60s
+
+          // Retry
+          try {
+            parsed = await fetchAndParse();
+          } catch (retryError) {
+            await supabase.from("logdata").update({
+              completed: new Date().toISOString(),
+              responsecode: `${retryError.response?.status || "N/A"}`,
+              errormessage: retryError.message,
+              handling: "Retry misslyckades efter 429"
+            }).eq("batchid", batchid).eq("request", fullUrl);
+
+            return res.status(500).json({
+              error: "Fel vid update-events efter retry",
+              responsecode: retryError.response?.status || "N/A",
+              errormessage: retryError.message
+            });
+          }
+        } else {
+          throw error;
+        }
+      }
 
       const eventsRaw = parsed.EventList?.Event;
       const flat = Array.isArray(eventsRaw) ? eventsRaw : eventsRaw ? [eventsRaw] : [];
@@ -92,7 +127,7 @@ router.post("/update-events", async (req, res) => {
 
       await supabase.from("logdata").update({
         completed: new Date().toISOString(),
-        responsecode: `${response.status} ${response.statusText}`
+        responsecode: "200 OK"
       }).eq("batchid", batchid).eq("request", fullUrl);
 
     } catch (error) {
@@ -115,7 +150,6 @@ router.post("/update-events", async (req, res) => {
     }
   }
 
-  // Lägg till alla rader i ett svep
   const { error: upsertError } = await supabase.from("events")
     .upsert(allRows, { onConflict: ["eventraceid"] });
 
