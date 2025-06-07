@@ -121,7 +121,13 @@ router.post("/update-results", async (req, res) => {
         };
       });
 
-      await saveResultsToSupabase(enrichedResults);
+      try {
+        await saveResultsToSupabase(enrichedResults);
+      } catch (err) {
+        await logRequest(batchid, anrop, 500, err?.message || "Unknown error", logId);
+        throw err;
+      }
+
       await logRequest(batchid, anrop, 200, null, logId, true);
     }
 
