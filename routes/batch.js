@@ -7,7 +7,6 @@ const eventorClient = require("../lib/eventorClient");
 const router = express.Router();
 
 router.post("/update-events", async (req, res) => {
-  // Enkel autentisering
   const apiKey = req.headers["x-api-key"];
   if (apiKey !== process.env.INTERNAL_API_KEY) {
     return res.status(401).json({ error: "Ej behörig" });
@@ -49,6 +48,7 @@ router.post("/update-events", async (req, res) => {
       const raceArray = Array.isArray(races) ? races : races ? [races] : [];
 
       return raceArray.map(race => ({
+        batchid,
         eventid: parseInt(event.EventId),
         eventraceid: parseInt(race.EventRaceId),
         eventdate: race.RaceDate?.Date,
