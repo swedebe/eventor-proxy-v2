@@ -44,7 +44,14 @@ router.post("/update-events", async (req, res) => {
         }
       }
 
-      const eventsSaved = await saveEventsToSupabase(response, batchid);
+      let eventsSaved = 0;
+      try {
+        eventsSaved = await saveEventsToSupabase(response, batchid);
+      } catch (saveErr) {
+        await logRequest(batchid, anrop, 500, saveErr.message, logId);
+        throw saveErr;
+      }
+
       totalEvents += eventsSaved;
       await logRequest(batchid, anrop, 200, null, logId, true);
     }
