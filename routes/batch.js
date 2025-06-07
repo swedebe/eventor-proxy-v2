@@ -5,6 +5,7 @@ const {
   saveEventsToSupabase,
   getEventsFromSupabase,
   deleteResultsForEvent,
+  getPersonMap,
   saveResultsToSupabase,
   logRequest,
   startBatch,
@@ -64,9 +65,11 @@ router.post("/batch/update-results", async (req, res) => {
   await startBatch(batchid, organisationId, "update-results");
 
   try {
+    const personMap = await getPersonMap(organisationId);
     const events = await getEventsFromSupabase();
+
     for (const event of events) {
-      const { eventid, eventraceid, eventdate } = event;
+      const { eventid, eventdate } = event;
       const anrop = `/results/organisation?organisationIds=${organisationId}&eventId=${eventid}`;
       const logId = await logRequest(batchid, anrop);
 
@@ -86,14 +89,17 @@ router.post("/batch/update-results", async (req, res) => {
       await deleteResultsForEvent(organisationId, eventid);
 
       const enrichedResults = data.map(result => {
+        const person = personMap[result.PersonId] || {};
         const klassfaktor = [16, 17, 19].includes(result.ClassTypeId)
           ? { 16: 125, 17: 100, 19: 75 }[result.ClassTypeId]
           : null;
+
         const poäng = klassfaktor != null && result.ResultPosition && result.ClassResult_numberOfStarts
           ? calculatePoints(klassfaktor, result.ResultPosition, result.ClassResult_numberOfStarts)
           : null;
-        const personålder = result.Person_BirthDate
-          ? calculateAge(eventdate, result.Person_BirthDate)
+
+        const personålder = person.Person_BirthDate
+          ? calculateAge(eventdate, person.Person_BirthDate)
           : null;
 
         return {
@@ -101,6 +107,7 @@ router.post("/batch/update-results", async (req, res) => {
           Klassfaktor: klassfaktor,
           Poäng: poäng,
           Personålder: personålder,
+          Person_sex: person.Person_sex || null,
           Result_Time: convertTimeToSeconds(result.Result_Time),
           Result_TimeDiff: convertTimeToSeconds(result.Result_TimeDiff),
           batchid,
