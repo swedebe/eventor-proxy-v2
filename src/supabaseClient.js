@@ -14,7 +14,23 @@ async function getEventsFromSupabase() {
   return data;
 }
 
+// Lägg in dummy-tävlingar i Supabase
+async function saveEventsToSupabase(events, batchid) {
+  const formatted = events.map(e => ({
+    eventid: e.eventid,
+    eventraceid: e.eventraceid,
+    eventdate: e.eventdate,
+    batchid,
+  }));
+
+  const { error } = await supabase.from("events").insert(formatted);
+  if (error) throw error;
+
+  return formatted.length;
+}
+
 module.exports = {
   supabase,
   getEventsFromSupabase,
+  saveEventsToSupabase,
 };
