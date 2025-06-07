@@ -7,6 +7,12 @@ const eventorClient = require("../lib/eventorClient");
 const router = express.Router();
 
 router.post("/update-events", async (req, res) => {
+  // Enkel autentisering
+  const apiKey = req.headers["x-api-key"];
+  if (apiKey !== process.env.INTERNAL_API_KEY) {
+    return res.status(401).json({ error: "Ej behörig" });
+  }
+
   const organisationId = req.body.organisationId;
   if (!organisationId) {
     return res.status(400).json({ error: "organisationId saknas" });
