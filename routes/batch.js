@@ -41,8 +41,14 @@ router.post("/update-events", async (req, res) => {
     const flat = Array.isArray(eventsRaw) ? eventsRaw : eventsRaw ? [eventsRaw] : [];
 
     const rows = flat.flatMap(event => {
-      const organiser = event.Organiser?.Name;
-      const organiserNames = Array.isArray(organiser) ? organiser.join(", ") : organiser || "";
+      const organiser = event.Organiser;
+
+      // Extrahera alla OrganisationId som strängar, oavsett om det är en eller flera
+      const organiserIds = organiser
+        ? Array.isArray(organiser.OrganisationId)
+          ? organiser.OrganisationId.join(", ")
+          : organiser.OrganisationId?.toString() || ""
+        : "";
 
       const races = event.EventRace;
       const raceArray = Array.isArray(races) ? races : races ? [races] : [];
@@ -53,7 +59,7 @@ router.post("/update-events", async (req, res) => {
         eventraceid: parseInt(race.EventRaceId),
         eventdate: race.RaceDate?.Date,
         eventname: event.Name,
-        eventorganiser: organiserNames,
+        eventorganiser: organiserIds,
         eventdistance: race.WRSInfo?.Distance,
         eventclassificationid: parseInt(event.EventClassificationId)
       }));
