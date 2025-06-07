@@ -1,170 +1,136 @@
 const express = require("express");
-const { v4: uuidv4 } = require("uuid");
-const xml2js = require("xml2js");
-const supabase = require("../lib/supabaseClient");
-const eventorClient = require("../lib/eventorClient");
-
 const router = express.Router();
+const { getEvents, getResultsForEvent } = require("../eventorClient");
+const {
+  saveEventsToSupabase,
+  getEventsFromSupabase,
+  deleteResultsForEvent,
+  saveResultsToSupabase,
+  logRequest,
+  startBatch,
+  endBatch,
+} = require("../supabaseClient");
+const { convertTimeToSeconds, calculatePoints, calculateAge } = require("../utils");
+const { validateApiKey, formatDate, sleep } = require("../helpers");
+const { v4: uuidv4 } = require("uuid");
 
-router.post("/update-events", async (req, res) => {
+router.post("/batch/update-events", async (req, res) => {
+  const { organisationId, fromDate, toDate } = req.body;
   const apiKey = req.headers["x-api-key"];
-  if (apiKey !== process.env.INTERNAL_API_KEY) {
-    return res.status(401).json({ error: "Ej behörig" });
-  }
-
-  const organisationId = req.body.organisationId;
-  if (!organisationId) {
-    return res.status(400).json({ error: "organisationId saknas" });
-  }
+  if (!validateApiKey(apiKey)) return res.status(401).json({ error: "Unauthorized" });
 
   const batchid = uuidv4();
+  const batchStart = new Date();
+  let totalEvents = 0;
 
-  const parseDate = (str) => new Date(str + "T00:00:00Z");
-  const formatDate = (date) => date.toISOString().slice(0, 10);
+  try {
+    const blocks = getDateBlocks(fromDate, toDate);
+    for (const block of blocks) {
+      const { start, end } = block;
+      const anrop = `/events?organisationId=${organisationId}&fromDate=${start}&toDate=${end}`;
+      const logId = await logRequest(batchid, anrop);
 
-  const toDate = req.body.toDate
-    ? parseDate(req.body.toDate)
-    : new Date();
-
-  const fromDate = req.body.fromDate
-    ? parseDate(req.body.fromDate)
-    : new Date(toDate.getTime() - 30 * 24 * 60 * 60 * 1000);
-
-  const allRows = [];
-
-  for (
-    let start = new Date(fromDate);
-    start <= toDate;
-    start.setDate(start.getDate() + 30)
-  ) {
-    const end = new Date(Math.min(
-      new Date(start.getTime() + 29 * 24 * 60 * 60 * 1000),
-      toDate
-    ));
-
-    const fromStr = formatDate(start);
-    const toStr = formatDate(end);
-
-    const eventorPath = `events?classificationIds=1,2,3,6&fromDate=${fromStr}&toDate=${toStr}`;
-    const fullUrl = `https://eventor.orientering.se/api/${eventorPath}`;
-
-    await supabase.from("logdata").insert({
-      batchid,
-      started: new Date().toISOString(),
-      request: fullUrl
-    });
-
-    const fetchAndParse = async () => {
-      const response = await eventorClient.get(eventorPath);
-      const xml = response.data;
-      const parser = new xml2js.Parser({ explicitArray: false });
-      const parsed = await parser.parseStringPromise(xml);
-      return parsed;
-    };
-
-    try {
-      let parsed;
+      let response;
       try {
-        parsed = await fetchAndParse();
-      } catch (error) {
-        if (error.response?.status === 429) {
-          // Vänta 60 sekunder och logga retry
-          await supabase.from("logdata").update({
-            handling: "Retry efter 429 (60s)"
-          }).eq("batchid", batchid).eq("request", fullUrl);
-
-          await new Promise(resolve => setTimeout(resolve, 60000)); // 60s
-
-          // Retry
-          try {
-            parsed = await fetchAndParse();
-          } catch (retryError) {
-            await supabase.from("logdata").update({
-              completed: new Date().toISOString(),
-              responsecode: `${retryError.response?.status || "N/A"}`,
-              errormessage: retryError.message,
-              handling: "Retry misslyckades efter 429"
-            }).eq("batchid", batchid).eq("request", fullUrl);
-
-            return res.status(500).json({
-              error: "Fel vid update-events efter retry",
-              responsecode: retryError.response?.status || "N/A",
-              errormessage: retryError.message
-            });
-          }
+        response = await getEvents(organisationId, start, end);
+      } catch (err) {
+        if (err.response?.status === 429) {
+          await sleep(60000);
+          response = await getEvents(organisationId, start, end);
         } else {
-          throw error;
+          await logRequest(batchid, anrop, err.response?.status, err.message, logId);
+          throw err;
         }
       }
 
-      const eventsRaw = parsed.EventList?.Event;
-      const flat = Array.isArray(eventsRaw) ? eventsRaw : eventsRaw ? [eventsRaw] : [];
-
-      const rows = flat.flatMap(event => {
-        const organiser = event.Organiser;
-        const organiserIds = organiser
-          ? Array.isArray(organiser.OrganisationId)
-            ? organiser.OrganisationId.join(", ")
-            : organiser.OrganisationId?.toString() || ""
-          : "";
-
-        const races = event.EventRace;
-        const raceArray = Array.isArray(races) ? races : races ? [races] : [];
-
-        return raceArray.map(race => ({
-          batchid,
-          eventid: parseInt(event.EventId),
-          eventraceid: parseInt(race.EventRaceId),
-          eventdate: race.RaceDate?.Date,
-          eventname: event.Name,
-          eventorganiser: organiserIds,
-          eventdistance: race.WRSInfo?.Distance,
-          eventclassificationid: parseInt(event.EventClassificationId)
-        }));
-      });
-
-      allRows.push(...rows);
-
-      await supabase.from("logdata").update({
-        completed: new Date().toISOString(),
-        responsecode: "200 OK"
-      }).eq("batchid", batchid).eq("request", fullUrl);
-
-    } catch (error) {
-      const responsecode = error.response
-        ? `${error.response.status} ${error.response.statusText}`
-        : "N/A";
-      const errormessage = error.message;
-
-      await supabase.from("logdata").update({
-        completed: new Date().toISOString(),
-        responsecode,
-        errormessage
-      }).eq("batchid", batchid).eq("request", fullUrl);
-
-      return res.status(500).json({
-        error: "Fel vid update-events",
-        responsecode,
-        errormessage
-      });
+      const eventsSaved = await saveEventsToSupabase(response, batchid);
+      totalEvents += eventsSaved;
+      await logRequest(batchid, anrop, 200, null, logId, true);
     }
+
+    res.json({ message: "Körning slutförd", antal: totalEvents, batchid });
+  } catch (err) {
+    await endBatch(batchid, "failed", err.message);
+    res.status(500).json({ error: "Fel vid uppdatering", errormessage: err.message });
   }
-
-  const { error: upsertError } = await supabase.from("events")
-    .upsert(allRows, { onConflict: ["eventraceid"] });
-
-  if (upsertError) {
-    return res.status(500).json({
-      error: "Fel vid upsert till events",
-      errormessage: upsertError.message
-    });
-  }
-
-  return res.status(200).json({
-    message: `Sparade ${allRows.length} tävlingar till Supabase`,
-    antal: allRows.length,
-    batchid
-  });
 });
+
+router.post("/batch/update-results", async (req, res) => {
+  const { organisationId } = req.body;
+  const apiKey = req.headers["x-api-key"];
+  if (!validateApiKey(apiKey)) return res.status(401).json({ error: "Unauthorized" });
+
+  const batchid = uuidv4();
+  await startBatch(batchid, organisationId, "update-results");
+
+  try {
+    const events = await getEventsFromSupabase();
+    for (const event of events) {
+      const { eventid, eventraceid, eventdate } = event;
+      const anrop = `/results/organisation?organisationIds=${organisationId}&eventId=${eventid}`;
+      const logId = await logRequest(batchid, anrop);
+
+      let data;
+      try {
+        data = await getResultsForEvent(organisationId, eventid);
+      } catch (err) {
+        if (err.response?.status === 429) {
+          await sleep(60000);
+          data = await getResultsForEvent(organisationId, eventid);
+        } else {
+          await logRequest(batchid, anrop, err.response?.status, err.message, logId);
+          continue;
+        }
+      }
+
+      await deleteResultsForEvent(organisationId, eventid);
+
+      const enrichedResults = data.map(result => {
+        const klassfaktor = [16, 17, 19].includes(result.ClassTypeId)
+          ? { 16: 125, 17: 100, 19: 75 }[result.ClassTypeId]
+          : null;
+        const poäng = klassfaktor != null && result.ResultPosition && result.ClassResult_numberOfStarts
+          ? calculatePoints(klassfaktor, result.ResultPosition, result.ClassResult_numberOfStarts)
+          : null;
+        const personålder = result.Person_BirthDate
+          ? calculateAge(eventdate, result.Person_BirthDate)
+          : null;
+
+        return {
+          ...result,
+          Klassfaktor: klassfaktor,
+          Poäng: poäng,
+          Personålder: personålder,
+          Result_Time: convertTimeToSeconds(result.Result_Time),
+          Result_TimeDiff: convertTimeToSeconds(result.Result_TimeDiff),
+          batchid,
+        };
+      });
+
+      await saveResultsToSupabase(enrichedResults);
+      await logRequest(batchid, anrop, 200, null, logId, true);
+    }
+
+    await endBatch(batchid, "success", "Alla resultat uppdaterade");
+    res.json({ message: "Körning slutförd", antal: events.length, batchid });
+  } catch (err) {
+    await endBatch(batchid, "failed", err.message);
+    res.status(500).json({ error: "Fel vid uppdatering", errormessage: err.message });
+  }
+});
+
+function getDateBlocks(from, to) {
+  const result = [];
+  const start = new Date(from || new Date(Date.now() - 30 * 86400000));
+  const end = new Date(to || new Date());
+  let current = new Date(start);
+
+  while (current < end) {
+    const next = new Date(Math.min(current.getTime() + 29 * 86400000, end.getTime()));
+    result.push({ start: formatDate(current), end: formatDate(next) });
+    current = new Date(next.getTime() + 86400000);
+  }
+  return result;
+}
 
 module.exports = router;
