@@ -8,7 +8,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Registrera alla batch-endpoints
+// Registrera batch-routes
 app.use("/batch", batchRouter);
 
 // Proxy mot Eventor API
@@ -39,9 +39,14 @@ app.get('/', (req, res) => {
   res.send('Eventor proxy is running.');
 });
 
-// Fångar async-fel som annars dödar processen
+// Global fångst av async-fel (med bättre loggning)
 process.on("unhandledRejection", (reason, promise) => {
-  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+  console.error("UNHANDLED REJECTION:");
+  try {
+    console.error(JSON.stringify(reason, null, 2));
+  } catch {
+    console.error(reason);
+  }
 });
 
 const PORT = process.env.PORT || 3000;
