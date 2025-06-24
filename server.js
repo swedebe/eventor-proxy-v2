@@ -1,19 +1,15 @@
 const express = require('express');
-const axios = require('axios');
 const dotenv = require('dotenv');
-const batchRouter = require('./routes/batch');
+const getEventsRouter = require('./GetEvents/GetEventsRouter');
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT; // Obligatoriskt för Render
+const PORT = process.env.PORT;
 
 app.use(express.json());
 
-// Batch-endpoint (vår egen kod)
-app.use('/batch', batchRouter);
-
-// Proxy mot Eventor API
+// Eventor-proxy
 app.get('/api/*', async (req, res) => {
   const path = req.originalUrl.replace('/api', '');
   const url = `https://eventor.orientering.se/api${path}`;
@@ -24,6 +20,7 @@ app.get('/api/*', async (req, res) => {
   }
 
   try {
+    const axios = require('axios');
     const response = await axios.get(url, {
       headers: { ApiKey: apiKey },
       responseType: 'text',
@@ -36,12 +33,14 @@ app.get('/api/*', async (req, res) => {
   }
 });
 
+// Endpoints för GetEvents
+app.use('/api', getEventsRouter);
+
 // Hälso-check
 app.get('/', (req, res) => {
   res.send('Eventor proxy is running.');
 });
 
-// Starta servern
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
