@@ -4,69 +4,61 @@ const { logStart, logEnd } = require("./GetResultsLogger");
 
 function convertTimeToSeconds(timeString) {
   if (!timeString) return null;
-
   const parts = timeString.split(":").map(p => parseInt(p, 10));
-  if (parts.length === 2) {
-    return parts[0] * 60 + parts[1]; // MM:SS
-  } else if (parts.length === 3) {
-    return parts[0] * 3600 + parts[1] * 60 + parts[2]; // HH:MM:SS
-  } else {
-    return null;
-  }
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return null;
 }
 
 function parseResults(xml, organisationid, eventId) {
-  const output = [];
-  const events = xml.ResultList?.Event || [];
+  const results = [];
+  const classResults = [].concat(xml.ResultList?.ClassResult || []);
 
-  for (const ev of [].concat(events)) {
-    const races = [].concat(ev.Race || []);
-    for (const race of races) {
-      const eventRaceId = parseInt(race.$?.raceId || 0);
-      const classes = [].concat(race.ClassResult || []);
-      for (const classResult of classes) {
-        const className = classResult.Class?.[0]?.Name?.[0] || null;
-        const classTypeId = parseInt(classResult.Class?.[0]?.ClassTypeId?.[0] || 0);
-        const klassfaktor = classTypeId === 16 ? 125 : classTypeId === 17 ? 100 : classTypeId === 19 ? 75 : null;
+  for (const classResult of classResults) {
+    const eventClass = classResult.EventClass?.[0] || {};
+    const className = eventClass.Name?.[0] || null;
+    const classTypeId = parseInt(eventClass.ClassTypeId?.[0] || 0);
+    const klassfaktor = classTypeId === 16 ? 125 : classTypeId === 17 ? 100 : classTypeId === 19 ? 75 : null;
 
-        const personResults = [].concat(classResult.PersonResult || []);
-        const antalStartande = personResults.length;
+    const numberOfStarts = parseInt(classResult.$?.numberOfStarts || classResult.numberOfStarts?.[0] || 0);
+    const personResults = [].concat(classResult.PersonResult || []);
 
-        for (const personResult of personResults) {
-          const person = personResult.Person?.[0] || {};
-          const result = personResult.Result?.[0] || {};
-          const personId = parseInt(person.PersonId?.[0] || 0);
-          const position = parseInt(result.Position?.[0] || 0);
-          const status = result.CompetitorStatus?.[0]?.$.value || "";
-          const time = convertTimeToSeconds(result.Time?.[0]);
-          const timeDiff = convertTimeToSeconds(result.TimeDiff?.[0]);
+    for (const personResult of personResults) {
+      const person = personResult.Person?.[0] || {};
+      const result = personResult.Result?.[0] || {};
+      const race = personResult.RaceResult?.[0]?.Result?.[0] || result;
 
-          const poäng = klassfaktor && position && antalStartande
-            ? parseFloat((klassfaktor * (1 - (position / antalStartande))).toFixed(2))
-            : null;
+      const personId = parseInt(person.PersonId?.[0] || 0);
+      const position = parseInt(race.ResultPosition?.[0] || 0);
+      const status = race.CompetitorStatus?.[0]?.$.value || "";
+      const time = convertTimeToSeconds(race.Time?.[0]);
+      const timeDiff = convertTimeToSeconds(race.TimeDiff?.[0]);
+      const raceId = parseInt(personResult.RaceResult?.[0]?.EventRaceId?.[0] || 0);
 
-          output.push({
-            personid: personId,
-            eventid: eventId,
-            eventraceid: eventRaceId,
-            eventclassname: className,
-            resulttime: time,
-            resulttimediff: timeDiff,
-            resultposition: position || null,
-            resultcompetitorstatus: status,
-            classresultnumberofstarts: antalStartande || null,
-            classtypeid: classTypeId || null,
-            klassfaktor,
-            points: poäng,
-            personage: null,
-            organisationid
-          });
-        }
-      }
+      const poäng = klassfaktor && position && numberOfStarts
+        ? parseFloat((klassfaktor * (1 - (position / numberOfStarts))).toFixed(2))
+        : null;
+
+      results.push({
+        personid: personId,
+        eventid: eventId,
+        eventraceid: raceId || null,
+        eventclassname: className,
+        resulttime: time,
+        resulttimediff: timeDiff,
+        resultposition: position || null,
+        resultcompetitorstatus: status,
+        classresultnumberofstarts: numberOfStarts || null,
+        classtypeid: classTypeId || null,
+        klassfaktor,
+        points: poäng,
+        personage: null,
+        organisationid
+      });
     }
   }
 
-  return output;
+  return results;
 }
 
 async function fetchResultsForClub(supabase, organisationid, apikey) {
@@ -94,14 +86,10 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
       continue;
     }
 
-    if (!existing || existing.length === 0) {
-      console.log(`[GetResults] Inga tidigare resultat – nyimport.`);
-    } else {
-      console.log(`[GetResults] Tidigare resultat finns – de tas bort innan uppdatering.`);
-    }
+    console.log(existing && existing.length ? `[GetResults] Tidigare resultat finns – de tas bort.` : `[GetResults] Inga tidigare resultat – nyimport.`);
 
     const url = `https://eventor.orientering.se/api/results/organisation?organisationIds=${organisationid}&eventId=${eventId}`;
-    const headers = { "ApiKey": apikey, "Accept": "application/xml" };
+    const headers = { ApiKey: apikey, Accept: "application/xml" };
 
     const logId = await logStart(supabase, url);
 
@@ -110,21 +98,21 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
       await logEnd(supabase, logId, response.status, null);
 
       const xml = await parseStringPromise(response.data);
-      const results = parseResults(xml, organisationid, eventId);
+      const parsedResults = parseResults(xml, organisationid, eventId);
 
-      console.log(`[GetResults] ${results.length} resultat hittades i Eventor`);
+      console.log(`[GetResults] ${parsedResults.length} resultat hittades i Eventor`);
 
       await supabase
         .from("results")
         .delete()
-        .match({ organisationid, eventId });
+        .match({ organisationid, eventid: eventId });
 
-      for (let i = 0; i < results.length; i += 500) {
-        const chunk = results.slice(i, i + 500);
+      for (let i = 0; i < parsedResults.length; i += 500) {
+        const chunk = parsedResults.slice(i, i + 500);
         await supabase.from("results").insert(chunk);
       }
 
-      console.log(`[GetResults] ${results.length} resultat har lagts in`);
+      console.log(`[GetResults] ${parsedResults.length} resultat har lagts in`);
     } catch (error) {
       const status = error.response?.status || "ERR";
       const message = error.stack || error.message || "Okänt fel";
