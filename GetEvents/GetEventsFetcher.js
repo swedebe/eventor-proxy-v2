@@ -29,6 +29,9 @@ async function fetchAndStoreEvents(organisationId) {
     console.log('Eventor response status:', response.status);
     xml = response.data;
 
+    // DEBUG: Logga hela svaret
+    console.log('Raw XML:', xml);
+
     await supabase
       .from('logdata')
       .update({ responsecode: '200 OK', completed: new Date().toISOString() })
