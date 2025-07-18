@@ -5,12 +5,24 @@ const { parseStringPromise } = require('xml2js');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const EVENTOR_API_KEY = process.env.EVENTOR_API_KEY;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const EVENTOR_API_BASE = 'https://eventor.orientering.se/api';
 
 async function fetchAndStoreEvents(organisationId) {
+  // 🗝️ Hämta klubbens API-nyckel
+  const { data: club, error: clubError } = await supabase
+    .from('clubs')
+    .select('apikey')
+    .eq('organisationid', organisationId)
+    .single();
+
+  if (clubError || !club?.apikey) {
+    throw new Error('Missing or invalid API key for this organisation');
+  }
+
+  const apiKey = club.apikey;
+
   const today = new Date();
   const fromDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
   const fromDateStr = `${fromDate.toISOString().split('T')[0]} 00:00:00`;
@@ -23,7 +35,7 @@ async function fetchAndStoreEvents(organisationId) {
   let xml;
   try {
     const response = await axios.get(url, {
-      headers: { ApiKey: EVENTOR_API_KEY },
+      headers: { ApiKey: apiKey },
     });
 
     console.log('Eventor response status:', response.status);
