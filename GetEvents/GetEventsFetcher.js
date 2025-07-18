@@ -47,6 +47,13 @@ async function fetchAndStoreEvents(organisationId) {
   }
 
   const result = await parseStringPromise(xml);
+
+  // 🔍 DEBUG: Visa antal och struktur för Event
+  console.log('Parsed Events:', result.Events?.Event?.length || 0);
+  (result.Events?.Event || []).forEach((event, i) => {
+    console.log(`Event ${i} structure:`, JSON.stringify(event, null, 2));
+  });
+
   const events = (result.Events?.Event || []).flatMap(event => {
     const eventid = parseInt(event.EventId?.[0]);
     const eventname = event.Name?.[0];
@@ -57,6 +64,8 @@ async function fetchAndStoreEvents(organisationId) {
     const eventclassificationid = parseInt(event.EventClassificationId?.[0]);
 
     const races = Array.isArray(event.EventRace) ? event.EventRace : [event.EventRace];
+    if (!races || !races[0]) return [];
+
     return races.map(race => ({
       eventid,
       eventraceid: parseInt(race.EventRaceId?.[0]),
@@ -69,7 +78,7 @@ async function fetchAndStoreEvents(organisationId) {
 
   const inserted = [];
   for (const e of events) {
-    console.log('Will insert event:', e); // Debug-logg
+    console.log('Will insert event:', e); // 🔍 DEBUG: logga varje event
     const { error } = await supabase
       .from('events')
       .upsert(e, { onConflict: 'eventraceid' });
