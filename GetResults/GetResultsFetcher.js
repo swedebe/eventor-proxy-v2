@@ -49,17 +49,17 @@ function parseResults(xml, organisationid, eventId) {
             personid: personId,
             eventid: eventId,
             eventraceid: eventRaceId,
-            eventclass_name: className,
-            result_time: time,
-            result_timediff: timeDiff,
+            eventclassname: className,
+            resulttime: time,
+            resulttimediff: timeDiff,
             resultposition: position || null,
-            result_competitorstatus: status,
-            classresult_numberofstarts: antalStartande || null,
+            resultcompetitorstatus: status,
+            classresultnumberofstarts: antalStartande || null,
             classtypeid: classTypeId || null,
             klassfaktor,
-            poäng,
-            personålder: null,
-            tillhörandeorganisationid: organisationid
+            points: poäng,
+            personage: null,
+            organisationid
           });
         }
       }
@@ -82,11 +82,10 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
   for (const eventId of uniqueEventIds) {
     console.log(`[GetResults] Organisation ${organisationid} – Event ${eventId}`);
 
-    // Använd befintlig kolumn i tabellen
     const { data: existing, error: errCheck } = await supabase
       .from("results")
       .select("eventraceid")
-      .eq("tillhörandeorganisationid", organisationid)
+      .eq("organisationid", organisationid)
       .eq("eventid", eventId)
       .limit(1);
 
@@ -118,7 +117,7 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
       await supabase
         .from("results")
         .delete()
-        .match({ tillhörandeorganisationid: organisationid, eventid });
+        .match({ organisationid, eventid });
 
       for (let i = 0; i < results.length; i += 500) {
         const chunk = results.slice(i, i + 500);
