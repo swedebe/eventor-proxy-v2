@@ -1,7 +1,7 @@
-async function logStart(supabase, anrop) {
+async function logStart(supabase, request) {
   const { data, error } = await supabase
     .from("logdata")
-    .insert([{ anrop, startad: new Date().toISOString() }])
+    .insert([{ request, started: new Date().toISOString() }])
     .select()
     .single();
 
@@ -9,12 +9,12 @@ async function logStart(supabase, anrop) {
   return data.id;
 }
 
-async function logEnd(supabase, id, resultatkod, felmeddelande) {
+async function logEnd(supabase, id, responsecode, errormessage) {
   const update = {
-    slutförd: new Date().toISOString(),
-    resultatkod,
+    completed: new Date().toISOString(),
+    responsecode,
   };
-  if (felmeddelande) update.felmeddelande = felmeddelande;
+  if (errormessage) update.errormessage = errormessage;
 
   const { error } = await supabase
     .from("logdata")
