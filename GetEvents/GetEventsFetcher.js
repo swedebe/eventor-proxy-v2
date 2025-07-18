@@ -67,19 +67,20 @@ async function fetchAndStoreEvents(organisationId) {
       eventname,
       eventorganiser,
       eventclassificationid,
-      batchid: log.id, // 👈 här kopplar vi raden till loggen
+      batchid: log.id,
     }));
   });
 
   const inserted = [];
   for (const e of events) {
-    console.log('Will insert event:', e);
     const { error } = await supabase
       .from('events')
       .upsert(e, { onConflict: 'eventraceid' });
     if (!error) inserted.push(e);
     else console.error('Insert error:', e, error);
   }
+
+  console.log(`Inserted ${inserted.length} events to Supabase`);
 
   return { insertedCount: inserted.length };
 }
