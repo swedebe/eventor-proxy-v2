@@ -46,7 +46,7 @@ function parseResults(xml, organisationid, eventId) {
             classtypeid: classTypeId || null,
             klassfaktor,
             poäng,
-            personålder: null, // räknas i annat steg
+            personålder: null,
             tillhörandeorganisationid: organisationid
           });
         }
@@ -68,6 +68,26 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
   const uniqueEventIds = [...new Set(events.map(e => e.eventid))];
 
   for (const eventId of uniqueEventIds) {
+    console.log(`[GetResults] Organisation ${organisationid} – Event ${eventId}`);
+
+    // Kontroll om det redan finns resultat
+    const { count, error: errCheck } = await supabase
+      .from("results")
+      .select("*", { count: "exact", head: true })
+      .eq("tillhörandeorganisationid", organisationid)
+      .eq("eventid", eventId);
+
+    if (errCheck) {
+      console.log(`[GetResults] Fel vid kontroll av befintliga resultat: ${errCheck.message}`);
+      continue;
+    }
+
+    if (count === 0) {
+      console.log(`[GetResults] Inga tidigare resultat – nyimport.`);
+    } else {
+      console.log(`[GetResults] Tidigare resultat finns – de tas bort innan uppdatering.`);
+    }
+
     const url = `https://eventor.orientering.se/api/results/organisation?organisationIds=${organisationid}&eventId=${eventId}`;
     const headers = { "ApiKey": apikey, "Accept": "application/xml" };
 
@@ -80,25 +100,28 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
       const xml = await parseStringPromise(response.data);
       const results = parseResults(xml, organisationid, eventId);
 
+      console.log(`[GetResults] ${results.length} resultat hittades i Eventor`);
+
       await supabase
         .from("results")
         .delete()
         .match({ tillhörandeorganisationid: organisationid, eventid });
 
-      const chunks = [];
       for (let i = 0; i < results.length; i += 500) {
-        chunks.push(results.slice(i, i + 500));
-      }
-
-      for (const chunk of chunks) {
+        const chunk = results.slice(i, i + 500);
         await supabase.from("results").insert(chunk);
       }
+
+      console.log(`[GetResults] ${results.length} resultat har lagts in`);
     } catch (error) {
       const status = error.response?.status || "ERR";
       const message = error.message || "Okänt fel";
+      console.log(`[GetResults] Fel för Event ${eventId}: ${message}`);
       await logEnd(supabase, logId, status, message);
     }
   }
+
+  console.log(`[GetResults] Färdig med klubb ${organisationid}`);
 }
 
 module.exports = { fetchResultsForClub };
