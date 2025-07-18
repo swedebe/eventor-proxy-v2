@@ -60,15 +60,20 @@ async function fetchAndStoreEvents(organisationId) {
     const races = Array.isArray(event.EventRace) ? event.EventRace : [event.EventRace];
     if (!races || !races[0]) return [];
 
-    return races.map(race => ({
-      eventid,
-      eventraceid: parseInt(race.EventRaceId?.[0]),
-      eventdate: race.RaceDate?.[0]?.Date?.[0] || race.EventDate?.[0],
-      eventname,
-      eventorganiser,
-      eventclassificationid,
-      batchid: log.id,
-    }));
+    return races.map(race => {
+      const eventdistance = race.WRSInfo?.[0]?.Distance?.[0] || null;
+
+      return {
+        eventid,
+        eventraceid: parseInt(race.EventRaceId?.[0]),
+        eventdate: race.RaceDate?.[0]?.Date?.[0] || race.EventDate?.[0],
+        eventname,
+        eventorganiser,
+        eventclassificationid,
+        eventdistance,
+        batchid: log.id,
+      };
+    });
   });
 
   const inserted = [];
