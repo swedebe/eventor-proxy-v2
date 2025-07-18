@@ -13,9 +13,10 @@ const EVENTOR_API_BASE = 'https://eventor.orientering.se/api';
 async function fetchAndStoreEvents(organisationId) {
   const today = new Date();
   const fromDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const fromDateStr = fromDate.toISOString().split('T')[0];
+  const fromDateStr = `${fromDate.toISOString().split('T')[0]} 00:00:00`;
+  const toDateStr = `${today.toISOString().split('T')[0]} 23:59:59`;
 
-  const url = `${EVENTOR_API_BASE}/events?organisationId=${organisationId}&startDate=${fromDateStr}&includeEventRegion=true&includeEventType=true&classificationIds=1,2,3,6`;
+  const url = `${EVENTOR_API_BASE}/events?fromDate=${encodeURIComponent(fromDateStr)}&toDate=${encodeURIComponent(toDateStr)}&classificationIds=1,2,3,6&EventStatusId=3`;
 
   const log = await logApiCall({ request: url });
 
@@ -24,6 +25,8 @@ async function fetchAndStoreEvents(organisationId) {
     const response = await axios.get(url, {
       headers: { ApiKey: EVENTOR_API_KEY },
     });
+
+    console.log('Eventor response status:', response.status);
     xml = response.data;
 
     await supabase
@@ -31,6 +34,7 @@ async function fetchAndStoreEvents(organisationId) {
       .update({ responsecode: '200 OK', completed: new Date().toISOString() })
       .eq('id', log.id);
   } catch (err) {
+    console.error('Axios error response:', err.response?.data || err.message);
     await supabase
       .from('logdata')
       .update({
