@@ -2,7 +2,6 @@ const axios = require("axios");
 const { parseStringPromise } = require("xml2js");
 const { logStart, logEnd } = require("./GetResultsLogger");
 
-// Hjälpfunktion direkt i filen
 function convertTimeToSeconds(timeString) {
   if (!timeString) return null;
 
@@ -83,18 +82,20 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
   for (const eventId of uniqueEventIds) {
     console.log(`[GetResults] Organisation ${organisationid} – Event ${eventId}`);
 
-    const { count, error: errCheck } = await supabase
+    // Ny robust kontroll om resultat finns
+    const { data: existing, error: errCheck } = await supabase
       .from("results")
-      .select("*", { count: "exact", head: true })
+      .select("id")
       .eq("tillhörandeorganisationid", organisationid)
-      .eq("eventid", eventId);
+      .eq("eventid", eventId)
+      .limit(1);
 
     if (errCheck) {
       console.log(`[GetResults] Fel vid kontroll av befintliga resultat: ${errCheck.message}`);
       continue;
     }
 
-    if (count === 0) {
+    if (!existing || existing.length === 0) {
       console.log(`[GetResults] Inga tidigare resultat – nyimport.`);
     } else {
       console.log(`[GetResults] Tidigare resultat finns – de tas bort innan uppdatering.`);
