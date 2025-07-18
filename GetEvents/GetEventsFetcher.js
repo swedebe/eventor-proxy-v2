@@ -17,7 +17,7 @@ async function fetchAndStoreEvents(organisationId) {
 
   const url = `${EVENTOR_API_BASE}/events?organisationId=${organisationId}&startDate=${fromDateStr}&includeEventRegion=true&includeEventType=true&classificationIds=1,2,3,6`;
 
-  const log = await logApiCall({ anrop: url });
+  const log = await logApiCall({ request: url });
 
   let xml;
   try {
@@ -27,18 +27,18 @@ async function fetchAndStoreEvents(organisationId) {
     xml = response.data;
 
     await supabase
-      .from('Loggdata')
-      .update({ Resultatkod: '200 OK', Slutförd: new Date().toISOString() })
-      .eq('BatchId', log.id);
+      .from('logdata')
+      .update({ responsecode: '200 OK', completed: new Date().toISOString() })
+      .eq('id', log.id);
   } catch (err) {
     await supabase
-      .from('Loggdata')
+      .from('logdata')
       .update({
-        Resultatkod: err.response?.status || 'ERR',
-        Felmeddelande: err.message,
-        Slutförd: new Date().toISOString(),
+        responsecode: err.response?.status || 'ERR',
+        errormessage: err.message,
+        completed: new Date().toISOString(),
       })
-      .eq('BatchId', log.id);
+      .eq('id', log.id);
     throw err;
   }
 
