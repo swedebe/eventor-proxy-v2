@@ -1,6 +1,7 @@
 const express = require('express');
 const dotenv = require('dotenv');
 const getEventsRouter = require('./GetEvents/GetEventsRouter');
+const getResultsRouter = require('./GetResults/GetResultsRouter');
 
 dotenv.config();
 
@@ -33,8 +34,9 @@ app.get('/api/*', async (req, res) => {
   }
 });
 
-// Endpoints för GetEvents
+// Endpoints för GetEvents och GetResults
 app.use('/api', getEventsRouter);
+app.use('/api', getResultsRouter);
 
 // Hälso-check
 app.get('/', (req, res) => {
