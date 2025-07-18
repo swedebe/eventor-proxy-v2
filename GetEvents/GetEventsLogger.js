@@ -5,10 +5,10 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-async function logApiCall({ anrop }) {
+async function logApiCall({ request }) {
   const { data, error } = await supabase
-    .from('Loggdata')
-    .insert([{ Anrop: anrop, Startad: new Date().toISOString() }])
+    .from('logdata')
+    .insert([{ request, started: new Date().toISOString() }])
     .select()
     .single();
 
