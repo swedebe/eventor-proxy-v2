@@ -127,7 +127,7 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
       console.log(`[GetResults] ${results.length} resultat har lagts in`);
     } catch (error) {
       const status = error.response?.status || "ERR";
-      const message = error.message || "Okänt fel";
+      const message = error.stack || error.message || "Okänt fel";
       console.log(`[GetResults] Fel för Event ${eventId}: ${message}`);
       await logEnd(supabase, logId, status, message);
     }
