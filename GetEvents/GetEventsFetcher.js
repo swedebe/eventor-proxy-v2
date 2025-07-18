@@ -29,8 +29,7 @@ async function fetchAndStoreEvents(organisationId) {
     console.log('Eventor response status:', response.status);
     xml = response.data;
 
-    // DEBUG: Logga hela svaret
-    console.log('Raw XML:', xml);
+    console.log('Raw XML:', xml); // Debug-logg
 
     await supabase
       .from('logdata')
@@ -59,10 +58,11 @@ async function fetchAndStoreEvents(organisationId) {
       .join(',');
     const classificationId = parseInt(event.EventClassificationId?.[0]);
 
-    return (event.EventRace || []).map(race => ({
+    const races = Array.isArray(event.EventRace) ? event.EventRace : [event.EventRace];
+    return races.map(race => ({
       EventId: eventId,
       EventRaceId: parseInt(race.EventRaceId?.[0]),
-      EventDate: race.Start?.[0]?.Date?.[0],
+      EventDate: race.RaceDate?.[0]?.Date?.[0] || race.EventDate?.[0],
       Event_Name: name,
       Event_Organiser: organisers,
       EventClassificationId: classificationId,
