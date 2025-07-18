@@ -10,7 +10,11 @@ const PORT = process.env.PORT;
 
 app.use(express.json());
 
-// Eventor-proxy
+// Endpoints för GetEvents och GetResults
+app.use('/api', getEventsRouter);
+app.use('/api', getResultsRouter);
+
+// Eventor-proxy (måste ligga efter interna endpoints)
 app.get('/api/*', async (req, res) => {
   const path = req.originalUrl.replace('/api', '');
   const url = `https://eventor.orientering.se/api${path}`;
@@ -33,10 +37,6 @@ app.get('/api/*', async (req, res) => {
     res.status(error.response?.status || 500).send(error.message);
   }
 });
-
-// Endpoints för GetEvents och GetResults
-app.use('/api', getEventsRouter);
-app.use('/api', getResultsRouter);
 
 // Hälso-check
 app.get('/', (req, res) => {
