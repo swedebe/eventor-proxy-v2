@@ -1,7 +1,20 @@
 const axios = require("axios");
 const { parseStringPromise } = require("xml2js");
 const { logStart, logEnd } = require("./GetResultsLogger");
-const { convertTimeToSeconds } = require("../utils/timeParser");
+
+// Hjälpfunktion direkt i filen
+function convertTimeToSeconds(timeString) {
+  if (!timeString) return null;
+
+  const parts = timeString.split(":").map(p => parseInt(p, 10));
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1]; // MM:SS
+  } else if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2]; // HH:MM:SS
+  } else {
+    return null;
+  }
+}
 
 function parseResults(xml, organisationid, eventId) {
   const output = [];
@@ -70,7 +83,6 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
   for (const eventId of uniqueEventIds) {
     console.log(`[GetResults] Organisation ${organisationid} – Event ${eventId}`);
 
-    // Kontroll om det redan finns resultat
     const { count, error: errCheck } = await supabase
       .from("results")
       .select("*", { count: "exact", head: true })
