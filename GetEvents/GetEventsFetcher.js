@@ -29,8 +29,6 @@ async function fetchAndStoreEvents(organisationId) {
     console.log('Eventor response status:', response.status);
     xml = response.data;
 
-    console.log('Raw XML:', xml); // Debug-logg
-
     await supabase
       .from('logdata')
       .update({ responsecode: '200 OK', completed: new Date().toISOString() })
@@ -50,30 +48,30 @@ async function fetchAndStoreEvents(organisationId) {
 
   const result = await parseStringPromise(xml);
   const events = (result.Events?.Event || []).flatMap(event => {
-    const eventId = parseInt(event.EventId?.[0]);
-    const name = event.Name?.[0];
-    const organisers = (event.Organisers?.[0]?.Organiser || [])
+    const eventid = parseInt(event.EventId?.[0]);
+    const eventname = event.Name?.[0];
+    const eventorganiser = (event.Organisers?.[0]?.Organiser || [])
       .map(o => o.Organisation?.[0]?.Name?.[0])
       .filter(Boolean)
       .join(',');
-    const classificationId = parseInt(event.EventClassificationId?.[0]);
+    const eventclassificationid = parseInt(event.EventClassificationId?.[0]);
 
     const races = Array.isArray(event.EventRace) ? event.EventRace : [event.EventRace];
     return races.map(race => ({
-      EventId: eventId,
-      EventRaceId: parseInt(race.EventRaceId?.[0]),
-      EventDate: race.RaceDate?.[0]?.Date?.[0] || race.EventDate?.[0],
-      Event_Name: name,
-      Event_Organiser: organisers,
-      EventClassificationId: classificationId,
+      eventid,
+      eventraceid: parseInt(race.EventRaceId?.[0]),
+      eventdate: race.RaceDate?.[0]?.Date?.[0] || race.EventDate?.[0],
+      eventname,
+      eventorganiser,
+      eventclassificationid,
     }));
   });
 
   const inserted = [];
   for (const e of events) {
     const { error } = await supabase
-      .from('Tävlingar')
-      .upsert(e, { onConflict: 'EventRaceId' });
+      .from('events')
+      .upsert(e, { onConflict: 'eventraceid' });
     if (!error) inserted.push(e);
     else console.error('Insert error:', e, error);
   }
