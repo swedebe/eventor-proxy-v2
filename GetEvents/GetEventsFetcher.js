@@ -69,6 +69,7 @@ async function fetchAndStoreEvents(organisationId) {
 
   const inserted = [];
   for (const e of events) {
+    console.log('Will insert event:', e); // Debug-logg
     const { error } = await supabase
       .from('events')
       .upsert(e, { onConflict: 'eventraceid' });
