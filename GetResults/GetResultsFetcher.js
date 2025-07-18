@@ -82,10 +82,10 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
   for (const eventId of uniqueEventIds) {
     console.log(`[GetResults] Organisation ${organisationid} – Event ${eventId}`);
 
-    // Ny robust kontroll om resultat finns
+    // Använd befintlig kolumn i tabellen
     const { data: existing, error: errCheck } = await supabase
       .from("results")
-      .select("id")
+      .select("eventraceid")
       .eq("tillhörandeorganisationid", organisationid)
       .eq("eventid", eventId)
       .limit(1);
