@@ -48,7 +48,6 @@ async function fetchAndStoreEvents(organisationId) {
 
   const result = await parseStringPromise(xml);
 
-  // ✅ Korrekt rottagg
   const events = (result.EventList?.Event || []).flatMap(event => {
     const eventid = parseInt(event.EventId?.[0]);
     const eventname = event.Name?.[0];
@@ -68,12 +67,13 @@ async function fetchAndStoreEvents(organisationId) {
       eventname,
       eventorganiser,
       eventclassificationid,
+      batchid: log.id, // 👈 här kopplar vi raden till loggen
     }));
   });
 
   const inserted = [];
   for (const e of events) {
-    console.log('Will insert event:', e); // 🔍 Debug
+    console.log('Will insert event:', e);
     const { error } = await supabase
       .from('events')
       .upsert(e, { onConflict: 'eventraceid' });
