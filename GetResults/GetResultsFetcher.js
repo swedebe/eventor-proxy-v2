@@ -117,7 +117,7 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
       await supabase
         .from("results")
         .delete()
-        .match({ organisationid, eventid });
+        .match({ organisationid, eventId });
 
       for (let i = 0; i < results.length; i += 500) {
         const chunk = results.slice(i, i + 500);
