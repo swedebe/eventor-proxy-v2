@@ -2,6 +2,7 @@ const express = require('express');
 const dotenv = require('dotenv');
 const getEventsRouter = require('./GetEvents/GetEventsRouter');
 const getResultsRouter = require('./GetResults/GetResultsRouter');
+const getPersonsRouter = require('./GetPersons/GetPersonsRouter');
 
 dotenv.config();
 
@@ -10,9 +11,10 @@ const PORT = process.env.PORT;
 
 app.use(express.json());
 
-// Endpoints för GetEvents och GetResults
+// Endpoints för GetEvents, GetResults och GetPersons
 app.use('/api', getEventsRouter);
 app.use('/api', getResultsRouter);
+app.use('/api', getPersonsRouter);
 
 // Eventor-proxy (måste ligga efter interna endpoints)
 app.get('/api/*', async (req, res) => {
