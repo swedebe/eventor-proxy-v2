@@ -1,5 +1,5 @@
 // GetPersonsFetcher.js
-import axios from 'axios';
+const axios = require('axios');
 
 export async function fetchPersons(organisationId, apiKey) {
   const url = `https://eventor.orientering.se/api/persons/organisations/${organisationId}`;
