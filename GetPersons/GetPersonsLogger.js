@@ -1,22 +1,24 @@
-// GetPersonsLogger.js
-import { createClient } from '@supabase/supabase-js';
+const { createClient } = require('@supabase/supabase-js');
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
-export async function logEventorRequest({ url, started, completed, status, error }) {
-  const { error: insertError } = await supabase.from('logdata').insert([
+async function logToDatabase(request, started, completed, responsecode, errormessage) {
+  const { error } = await supabase.from('logdata').insert([
     {
-      request: url,
+      request,
       started,
       completed,
-      responsecode: status ? `${status}` : null,
-      errormessage: error || null
-    }
+      responsecode,
+      errormessage,
+    },
   ]);
 
-  if (insertError) {
-    console.error('Failed to log request:', insertError);
+  if (error) {
+    console.error('Failed to insert logdata:', error.message);
   }
 }
+
+module.exports = { logToDatabase };
