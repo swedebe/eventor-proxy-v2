@@ -15,52 +15,48 @@ function convertTimeToSeconds(timeString) {
   }
 }
 
-function parseResults(xml, organisationid, eventid) {
+function parseResults(xml, organisationid, eventId) {
   const output = [];
-  const classResults = [].concat(xml?.ResultList?.ClassResult || []);
+  const classResults = [].concat(xml.ResultList?.ClassResult || []);
 
   for (const classResult of classResults) {
     const className = classResult.EventClass?.[0]?.Name?.[0] || null;
     const classTypeId = parseInt(classResult.EventClass?.[0]?.ClassTypeId?.[0] || 0);
     const klassfaktor = classTypeId === 16 ? 125 : classTypeId === 17 ? 100 : classTypeId === 19 ? 75 : null;
-    const antalStartande = parseInt(classResult.$?.numberOfStarts || 0);
 
     const personResults = [].concat(classResult.PersonResult || []);
+    const antalStartande = personResults.length;
+
     for (const personResult of personResults) {
       const person = personResult.Person?.[0] || {};
       const result = personResult.Result?.[0] || {};
+      const eventRaceId = parseInt(personResult.RaceResult?.[0]?.EventRaceId?.[0] || 0);
       const personId = parseInt(person.PersonId?.[0] || 0);
       const position = parseInt(result.ResultPosition?.[0] || 0);
       const status = result.CompetitorStatus?.[0]?.$.value || "";
       const time = convertTimeToSeconds(result.Time?.[0]);
       const timeDiff = convertTimeToSeconds(result.TimeDiff?.[0]);
-      const age = person.BirthDate?.[0]?.Date?.[0] ? new Date().getFullYear() - parseInt(person.BirthDate[0].Date[0].substring(0, 4)) : null;
 
-      const raceResults = [].concat(personResult.RaceResult || []);
-      for (const raceResult of raceResults) {
-        const eventraceid = parseInt(raceResult.EventRaceId?.[0] || 0);
+      const poäng = klassfaktor && position && antalStartande
+        ? parseFloat((klassfaktor * (1 - (position / antalStartande))).toFixed(2))
+        : null;
 
-        const poäng = klassfaktor && position && antalStartande
-          ? parseFloat((klassfaktor * (1 - (position / antalStartande))).toFixed(2))
-          : null;
-
-        output.push({
-          personid: personId,
-          eventid,
-          eventraceid,
-          eventclassname: className,
-          resulttime: time,
-          resulttimediff: timeDiff,
-          resultposition: position || null,
-          resultcompetitorstatus: status,
-          classresultnumberofstarts: antalStartande || null,
-          classtypeid: classTypeId || null,
-          klassfaktor,
-          points: poäng,
-          personage: age,
-          organisationid
-        });
-      }
+      output.push({
+        personid: personId,
+        eventid: eventId,
+        eventraceid: eventRaceId,
+        eventclassname: className,
+        resulttime: time,
+        resulttimediff: timeDiff,
+        resultposition: position || null,
+        resultcompetitorstatus: status,
+        classresultnumberofstarts: antalStartande || null,
+        classtypeid: classTypeId || null,
+        klassfaktor,
+        points: poäng,
+        personage: null,
+        organisationid
+      });
     }
   }
 
@@ -68,15 +64,9 @@ function parseResults(xml, organisationid, eventid) {
 }
 
 async function fetchResultsForClub(supabase, organisationid, apikey) {
-  // Start batch
-  const { data: batchStart, error: batchStartError } = await supabase
-    .from("batchrun")
-    .insert([{ modul: "GetResults", starttid: new Date().toISOString() }])
-    .select("id")
-    .single();
-
-  const batchId = batchStart?.id || null;
-  if (batchStartError) console.log("[GetResults] Fel vid start av batchrun:", batchStartError.message);
+  const initiatedby = "GetResults";
+  const renderjobid = process.env.RENDER_EXTERNAL_URL || null;
+  const appversion = process.env.RENDER_GIT_COMMIT || null;
 
   const { data: events, error: errEvents } = await supabase
     .from("events")
@@ -86,6 +76,20 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
   if (errEvents) throw new Error("Fel vid hämtning av eventid: " + errEvents.message);
 
   const uniqueEventIds = [...new Set(events.map(e => e.eventid))];
+
+  let batchId = null;
+
+  const batchInsert = await supabase
+    .from("batchrun")
+    .insert([{ initiatedby, renderjobid, appversion }])
+    .select("id")
+    .single();
+
+  if (batchInsert.error) {
+    console.error("[GetResults] Fel vid skapande av batchrun:", batchInsert.error.message);
+  } else {
+    batchId = batchInsert.data.id;
+  }
 
   for (const eventId of uniqueEventIds) {
     console.log(`[GetResults] Organisation ${organisationid} – Event ${eventId}`);
@@ -133,32 +137,34 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
       }
 
       console.log(`[GetResults] ${results.length} resultat har lagts in`);
+
+      await supabase
+        .from("tableupdates")
+        .upsert({ tablename: "results", updatedby: initiatedby }, { onConflict: ["tablename"] });
+
     } catch (error) {
       const status = error.response?.status || "ERR";
       const message = error.message || "Okänt fel";
       console.log(`[GetResults] Fel för Event ${eventId}: ${message}`);
       await logEnd(supabase, logId, status, message);
+      if (batchId) {
+        await supabase
+          .from("batchrun")
+          .update({ status: "ERROR" })
+          .eq("id", batchId);
+      }
+      continue;
     }
   }
 
   console.log(`[GetResults] Färdig med klubb ${organisationid}`);
 
-  // Avsluta batch och uppdatera tableupdates
   if (batchId) {
-    const { error: batchEndError } = await supabase
+    await supabase
       .from("batchrun")
-      .update({ sluttid: new Date().toISOString() })
+      .update({ status: "OK" })
       .eq("id", batchId);
-
-    if (batchEndError) console.log("[GetResults] Fel vid avslut av batchrun:", batchEndError.message);
   }
-
-  const { error: updateError } = await supabase
-    .from("tableupdates")
-    .update({ lastupdated: new Date().toISOString() })
-    .eq("tablename", "results");
-
-  if (updateError) console.log("[GetResults] Fel vid uppdatering av tableupdates:", updateError.message);
 }
 
 module.exports = { fetchResultsForClub };
