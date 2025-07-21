@@ -1,3 +1,4 @@
+
 const axios = require("axios");
 const { parseStringPromise } = require("xml2js");
 const { logStart, logEnd } = require("./GetResultsLogger");
@@ -62,14 +63,35 @@ function parseResults(xml, organisationid, eventId) {
 }
 
 async function fetchResultsForClub(supabase, organisationid, apikey) {
-  console.log(`[GetResultsRouter] Startar körning av resultatuppdatering`);
+  const batchStart = new Date().toISOString();
+  let totalInserted = 0;
+  let totalErrors = 0;
+  let batchId = null;
 
-  const { error: batchError } = await supabase.from("batchrun").insert({
-    tablename: "results",
-    starttime: new Date().toISOString(),
-  });
-  if (batchError) {
-    console.log(`[GetResults] Fel vid skapande av batchrun: ${batchError.message}`);
+  try {
+    const { data: batchrun, error: batchError } = await supabase
+      .from("batchrun")
+      .insert([{
+        organisationid,
+        starttime: batchStart,
+        status: "running",
+        comment: "GetResults",
+        numberofrequests: 0,
+        numberoferrors: 0,
+        initiatedby: "manual",
+        renderjobid: null,
+        appversion: "v1"
+      }])
+      .select("id")
+      .single();
+
+    if (batchError) {
+      console.log(`[GetResults] Fel vid skapande av batchrun: ${batchError.message}`);
+    } else {
+      batchId = batchrun.id;
+    }
+  } catch (e) {
+    console.log(`[GetResults] Fel vid skapande av batchrun: ${e.message}`);
   }
 
   const { data: events, error: errEvents } = await supabase
@@ -80,7 +102,6 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
   if (errEvents) throw new Error("Fel vid hämtning av eventid: " + errEvents.message);
 
   const uniqueEventIds = [...new Set(events.map(e => e.eventid))];
-  let totalInserted = 0;
 
   for (const eventId of uniqueEventIds) {
     console.log(`[GetResults] Organisation ${organisationid} – Event ${eventId}`);
@@ -123,9 +144,19 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
         await supabase.from("results").insert(chunk);
       }
 
-      console.log(`[GetResults] ${parsedResults.length} resultat har lagts in`);
       totalInserted += parsedResults.length;
+
+      await supabase
+        .from("tableupdates")
+        .upsert({
+          tablename: "results",
+          lastupdated: new Date().toISOString(),
+          updatedbybatchid: batchId
+        });
+
+      console.log(`[GetResults] ${parsedResults.length} resultat har lagts in`);
     } catch (error) {
+      totalErrors++;
       const status = error.response?.status || "ERR";
       const message = error.stack || error.message || "Okänt fel";
       console.log(`[GetResults] Fel för Event ${eventId}: ${message}`);
@@ -133,15 +164,16 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
     }
   }
 
-  const { error: updateError } = await supabase.from("tableupdates").upsert({
-    tablename: "results",
-    lastupdated: new Date().toISOString(),
-    status: "OK",
-    rowcount: totalInserted,
-  });
-
-  if (updateError) {
-    console.log(`[GetResults] Fel vid upsert i tableupdates: ${updateError.message}`);
+  if (batchId) {
+    await supabase
+      .from("batchrun")
+      .update({
+        endtime: new Date().toISOString(),
+        status: totalErrors > 0 ? "partial" : "success",
+        numberofrequests: uniqueEventIds.length,
+        numberoferrors: totalErrors
+      })
+      .eq("id", batchId);
   }
 
   console.log(`[GetResults] Färdig med klubb ${organisationid}`);
