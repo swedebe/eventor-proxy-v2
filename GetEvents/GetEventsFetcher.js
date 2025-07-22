@@ -15,7 +15,6 @@ async function fetchAndStoreEvents(organisationId) {
   const renderJobId = null;
   const comment = 'Hämtning av events';
 
-  // 1. Skapa batchrun-rad
   const { data: batchData, error: batchError } = await supabase
     .from('batchrun')
     .insert([
@@ -39,7 +38,6 @@ async function fetchAndStoreEvents(organisationId) {
 
   const batchId = batchData.id;
 
-  // 2. Hämta API-nyckel från Supabase
   const { data: club, error: clubError } = await supabase
     .from('clubs')
     .select('apikey')
@@ -138,17 +136,27 @@ async function fetchAndStoreEvents(organisationId) {
     });
   });
 
+  console.log("[GetEvents] Antal events att spara:", events.length);
+  if (events.length > 0) {
+    console.log("[GetEvents] Första radens data:", events[0]);
+  } else {
+    console.warn("[GetEvents] Inga events hittades i Eventor-svaret.");
+  }
+
   const inserted = [];
   for (const e of events) {
     const { error } = await supabase
       .from('events')
       .upsert(e, { onConflict: 'eventraceid' });
 
-    if (!error) inserted.push(e);
-    else numberOfErrors++;
+    if (!error) {
+      inserted.push(e);
+    } else {
+      numberOfErrors++;
+      console.error(`[GetEvents] Fel vid insert av eventraceid=${e.eventraceid}:`, error.message);
+    }
   }
 
-  // 3. Avsluta batchrun
   await supabase
     .from('batchrun')
     .update({
@@ -158,7 +166,6 @@ async function fetchAndStoreEvents(organisationId) {
     })
     .eq('id', batchId);
 
-  // 4. Uppdatera tableupdates om minst 1 rad skrevs
   if (inserted.length > 0) {
     await supabase
       .from('tableupdates')
@@ -172,8 +179,7 @@ async function fetchAndStoreEvents(organisationId) {
       );
   }
 
-  console.log(`Inserted ${inserted.length} events to Supabase`);
-
+  console.log(`[GetEvents] Inserted ${inserted.length} events to Supabase`);
   return { insertedCount: inserted.length };
 }
 
