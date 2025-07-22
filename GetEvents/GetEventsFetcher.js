@@ -106,13 +106,29 @@ async function fetchAndStoreEvents(organisationId) {
 
   const result = await parseStringPromise(xml);
 
+  // Hämta alla klubbnamn som lookup-tabell
+  const { data: eventorclubs, error: lookupError } = await supabase
+    .from('eventorclubs')
+    .select('organisationid, clubname');
+
+  if (lookupError) {
+    throw new Error('Kunde inte hämta klubbnamn från eventorclubs');
+  }
+  const clubMap = Object.fromEntries(eventorclubs.map(c => [String(c.organisationid), c.clubname]));
+
   const events = (result.EventList?.Event || []).flatMap((event) => {
     const eventid = parseInt(event.EventId?.[0]);
     const eventnameBase = event.Name?.[0];
-    const eventorganiser = (event.Organiser?.[0]?.OrganisationId || [])
+    const organiserIds = (event.Organiser?.[0]?.OrganisationId || [])
       .map((orgId) => orgId?._ || orgId)
-      .filter(Boolean)
-      .join(',');
+      .filter(Boolean);
+
+    const organiserNames = organiserIds
+      .map((id) => clubMap[String(id)] || `Organisation ${id}`)
+      .join(', ');
+
+    const eventorganiser_ids = organiserIds.join(',');
+    const eventorganiser_names = organiserNames;
 
     const eventclassificationid = parseInt(event.EventClassificationId?.[0]);
     const eventform = event.$?.eventForm || null;
@@ -136,7 +152,8 @@ async function fetchAndStoreEvents(organisationId) {
         eventraceid,
         eventdate,
         eventname: fullEventName,
-        eventorganiser,
+        eventorganiser: eventorganiser_names,
+        eventorganiser_ids,
         eventclassificationid,
         eventdistance,
         eventform,
