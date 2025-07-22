@@ -109,10 +109,11 @@ async function fetchAndStoreEvents(organisationId) {
   const events = (result.EventList?.Event || []).flatMap((event) => {
     const eventid = parseInt(event.EventId?.[0]);
     const eventnameBase = event.Name?.[0];
-    const eventorganiser = (event.Organisers?.[0]?.Organiser || [])
-      .map((o) => o.Organisation?.[0]?.Name?.[0])
+    const eventorganiser = (event.Organiser?.[0]?.OrganisationId || [])
+      .map((orgId) => orgId?._ || orgId)
       .filter(Boolean)
       .join(',');
+
     const eventclassificationid = parseInt(event.EventClassificationId?.[0]);
     const eventform = event.$?.eventForm || null;
 
