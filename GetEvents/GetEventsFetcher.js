@@ -108,12 +108,13 @@ async function fetchAndStoreEvents(organisationId) {
 
   const events = (result.EventList?.Event || []).flatMap((event) => {
     const eventid = parseInt(event.EventId?.[0]);
-    const eventname = event.Name?.[0];
+    const eventnameBase = event.Name?.[0];
     const eventorganiser = (event.Organisers?.[0]?.Organiser || [])
       .map((o) => o.Organisation?.[0]?.Name?.[0])
       .filter(Boolean)
       .join(',');
     const eventclassificationid = parseInt(event.EventClassificationId?.[0]);
+    const eventform = event.$?.eventForm || null;
 
     const races = Array.isArray(event.EventRace)
       ? event.EventRace
@@ -121,16 +122,23 @@ async function fetchAndStoreEvents(organisationId) {
     if (!races || !races[0]) return [];
 
     return races.map((race) => {
+      const eventraceid = parseInt(race.EventRaceId?.[0]);
+      const racename = race.Name?.[0] || '';
+      const eventdate = race.RaceDate?.[0]?.Date?.[0] || race.EventDate?.[0];
       const eventdistance = race.WRSInfo?.[0]?.Distance?.[0] || null;
+
+      const fullEventName =
+        eventform === 'IndMultiDay' ? `${eventnameBase} – ${racename}` : eventnameBase;
 
       return {
         eventid,
-        eventraceid: parseInt(race.EventRaceId?.[0]),
-        eventdate: race.RaceDate?.[0]?.Date?.[0] || race.EventDate?.[0],
-        eventname,
+        eventraceid,
+        eventdate,
+        eventname: fullEventName,
         eventorganiser,
         eventclassificationid,
         eventdistance,
+        eventform,
         batchid: batchId,
       };
     });
