@@ -16,7 +16,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
 
   const { data: existingRows, error: existingError } = await supabase
     .from('results')
-    .select('id')
+    .select('personid')
     .eq('clubparticipation', organisationId)
     .eq('eventid', eventId);
 
