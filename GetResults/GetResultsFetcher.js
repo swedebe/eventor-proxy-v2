@@ -14,25 +14,6 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
   const logContext = `[GetResults] Organisation ${organisationId} – Event ${eventId}`;
   console.log(`${logContext}`);
 
-  const { data: club, error: clubError } = await supabase
-    .from('clubs')
-    .select('apikey')
-    .eq('organisationid', organisationId)
-    .maybeSingle();
-
-  if (clubError || !club?.apikey) {
-    console.error(`${logContext} Kunde inte hämta API-nyckel`);
-    await insertLogData(supabase, {
-      source: 'GetResultsFetcher',
-      level: 'error',
-      message: 'Kunde inte hämta API-nyckel',
-      organisationid: organisationId,
-      eventid: eventId,
-      batchid
-    });
-    return;
-  }
-
   const { data: existingRows, error: existingError } = await supabase
     .from('results')
     .select('id')
@@ -60,7 +41,6 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
       .delete()
       .eq('clubparticipation', organisationId)
       .eq('eventid', eventId);
-
     if (deleteError) {
       console.error(`${logContext} Fel vid delete av tidigare rader:`, deleteError.message);
       await insertLogData(supabase, {
@@ -77,36 +57,37 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
     console.log(`${logContext} Inga tidigare resultat – nyimport.`);
   }
 
-  const url = `https://eventor.orientering.se/api/results/organisation?organisationId=${organisationId}&eventId=${eventId}&apiKey=${club.apikey}`;
-  const response = await fetch(url);
+  const response = await fetch(`${process.env.SELF_BASE_URL}/api/eventor/results?eventId=${eventId}&organisationId=${organisationId}`);
   const xml = await response.text();
 
-  const { data: eventInfo, error: eventError } = await supabase
-    .from('events')
-    .select('eventform')
-    .eq('eventid', eventId)
-    .maybeSingle();
+  let parsed;
+  try {
+    const eventformRes = await supabase
+      .from('events')
+      .select('eventform')
+      .eq('eventid', eventId)
+      .single();
 
-  if (eventError || !eventInfo) {
-    console.error(`${logContext} Kunde inte hämta eventform`);
+    const eventform = eventformRes?.data?.eventform || '';
+
+    if (eventform === 'IndMultiDay') {
+      parsed = parseResultsMultiDay(xml);
+    } else if (eventform === 'RelaySingleDay') {
+      parsed = parseResultsRelay(xml);
+    } else {
+      parsed = parseResultsStandard(xml);
+    }
+  } catch (parseError) {
+    console.error(`${logContext} Fel vid parsning av resultat:`, parseError);
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
-      message: `Kunde inte hämta eventform: ${eventError?.message}`,
+      message: `Fel vid parsning av resultat: ${parseError.message}`,
       organisationid: organisationId,
       eventid: eventId,
       batchid
     });
     return;
-  }
-
-  let parsed;
-  if (eventInfo.eventform === 'IndMultiDay') {
-    parsed = parseResultsMultiDay(xml);
-  } else if (eventInfo.eventform === 'RelaySingleDay') {
-    parsed = parseResultsRelay(xml);
-  } else {
-    parsed = parseResultsStandard(xml);
   }
 
   if (!parsed || parsed.length === 0) {
@@ -174,7 +155,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
 
   const numberOfRowsAfter = afterRows?.length ?? 0;
   if (afterError) {
-    console.error(`${logContext} Fel vid räkning efter insert:`, afterError.message);
+    console.error(`${logContext} Fel vid räkning efter insert:`, afterError);
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
@@ -196,7 +177,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
     .eq('id', batchid);
 
   if (updateBatchError) {
-    console.error(`${logContext} Fel vid uppdatering av batchrun:`, updateBatchError.message);
+    console.error(`${logContext} Fel vid uppdatering av batchrun:`, updateBatchError);
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
@@ -206,6 +187,42 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
       batchid
     });
   }
+
+  return {
+    numberOfRowsBefore,
+    numberOfRowsAfter,
+    insertedCount: parsed.length
+  };
 }
 
-module.exports = fetchResultsForEvent;
+async function fetchResultsForClub({ organisationId, batchid }) {
+  console.log(`[GetResults] === START club ${organisationId} ===`);
+
+  const { data: events, error: eventsError } = await supabase
+    .from('events')
+    .select('eventid, eventform');
+
+  if (eventsError || !events) {
+    console.error(`[GetResults] Fel vid hämtning av events: ${eventsError?.message}`);
+    await insertLogData(supabase, {
+      source: 'GetResultsFetcher',
+      level: 'error',
+      message: `Fel vid hämtning av events: ${eventsError?.message}`,
+      organisationid: organisationId,
+      batchid
+    });
+    return;
+  }
+
+  for (const event of events) {
+    await fetchResultsForEvent({
+      organisationId,
+      eventId: event.eventid,
+      batchid
+    });
+  }
+
+  console.log(`[GetResults] === SLUT club ${organisationId} ===`);
+}
+
+module.exports = { fetchResultsForEvent, fetchResultsForClub };
