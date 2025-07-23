@@ -3,8 +3,6 @@ const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
-const port = process.env.PORT || 10000;
-
 app.use(express.json());
 
 const supabase = createClient(
@@ -12,54 +10,50 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// GET används av GetResults
+// Koppla in routrar för GetEvents och GetResults
+const getEventsRouter = require('./GetEvents/GetEventsRouter.js');
+const getResultsRouter = require('./GetResults/GetResultsRouter.js');
+app.use('/api', getEventsRouter);
+app.use('/api', getResultsRouter);
+
+// Proxy som används av GetResultsFetcher
 app.get('/api/eventor/results', async (req, res) => {
   const { eventId, organisationId } = req.query;
 
   if (!eventId || !organisationId) {
-    return res.status(400).json({ error: 'Missing eventId or organisationId in query' });
+    return res.status(400).send('Missing eventId or organisationId');
   }
 
   const { data, error } = await supabase
     .from('clubs')
     .select('apikey')
     .eq('organisationid', organisationId)
-    .maybeSingle();
+    .single();
 
-  if (error || !data || !data.apikey) {
-    return res.status(500).json({ error: 'Could not retrieve API key for organisation' });
+  if (error || !data?.apikey) {
+    console.error(`[server.js] Kunde inte hämta API-nyckel för organisationId=${organisationId}`, error?.message);
+    return res.status(500).send('Kunde inte hämta API-nyckel från databasen');
   }
 
-  const url = `https://eventor.orientering.se/api/results/organisation?organisationId=${organisationId}&eventId=${eventId}`;
-  const response = await fetch(url, {
-    headers: { 'ApiKey': data.apikey }
-  });
+  const eventorUrl = `https://eventor.orientering.se/api/results/organisation?eventId=${eventId}&organisationId=${organisationId}`;
 
-  const body = await response.text();
-  res.status(response.status).send(body);
+  try {
+    const response = await fetch(eventorUrl, {
+      headers: {
+        'ApiKey': data.apikey,
+        'Accept': 'application/xml'
+      }
+    });
+
+    const xml = await response.text();
+    return res.type('application/xml').status(response.status).send(xml);
+  } catch (err) {
+    console.error('[server.js] Fel vid hämtning från Eventor:', err.message);
+    return res.status(500).send('Fel vid hämtning från Eventor');
+  }
 });
 
-// POST används av GetEvents
-app.post('/api/eventor/results', async (req, res) => {
-  const { organisationId } = req.body;
-
-  if (!organisationId) {
-    return res.status(400).json({ error: 'Missing organisationId in body' });
-  }
-
-  if (!process.env.EVENTOR_API_KEY) {
-    return res.status(500).json({ error: 'Missing EVENTOR_API_KEY in environment' });
-  }
-
-  const url = `https://eventor.orientering.se/api/results/organisation?organisationId=${organisationId}`;
-  const response = await fetch(url, {
-    headers: { 'ApiKey': process.env.EVENTOR_API_KEY }
-  });
-
-  const body = await response.text();
-  res.status(response.status).send(body);
-});
-
+const port = process.env.PORT || 10000;
 app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+  console.log(`Server is running on port ${port}`);
 });
