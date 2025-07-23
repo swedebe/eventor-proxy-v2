@@ -1,53 +1,44 @@
 const express = require("express");
 const router = express.Router();
+const fetchResultsForClub = require("./GetResultsFetcher"); // Ändrat här
 const { createClient } = require("@supabase/supabase-js");
-const { fetchResultsForClub } = require("./GetResultsFetcher");
+const { insertLogData } = require("../shared/logHelpers");
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
-console.log("[GetResultsRouter] Initierar Supabase-klient");
-console.log("[GetResultsRouter] SUPABASE_URL:", supabaseUrl);
-console.log("[GetResultsRouter] SUPABASE_SERVICE_ROLE_KEY finns:", !!serviceKey);
+router.post("/getresults", async (req, res) => {
+  console.log("[GetResultsRouter] Startar körning av resultatuppdatering");
 
-const supabase = createClient(supabaseUrl, serviceKey);
-
-router.get("/runGetResults", async (req, res) => {
-  try {
-    console.log("[GetResultsRouter] Startar körning av resultatuppdatering");
-
-    const { data: clubs, error } = await supabase
-      .from("clubs")
-      .select("organisationid, apikey");
-
-    if (error) {
-      console.error("[GetResultsRouter] Fel vid hämtning av klubbar:", error.message);
-      throw new Error(error.message);
-    }
-
-    if (!clubs || clubs.length === 0) {
-      console.warn("[GetResultsRouter] Inga klubbar hittades i tabellen clubs");
-      throw new Error("Inga klubbar hittades i tabellen clubs");
-    }
-
-    console.log("[GetResultsRouter] Klubbar att köra:", clubs.map(c => c.organisationid).join(", "));
-
-    for (const club of clubs) {
-      try {
-        console.log(`[GetResultsRouter] Kör fetchResultsForClub för organisationid=${club.organisationid}`);
-        await fetchResultsForClub(supabase, club.organisationid, club.apikey);
-        console.log(`[GetResultsRouter] Klar med organisationid=${club.organisationid}`);
-      } catch (innerErr) {
-        console.error(`[GetResultsRouter] Fel i fetchResultsForClub för organisationid=${club.organisationid}:`, innerErr.stack || innerErr.message);
-      }
-    }
-
-    console.log("[GetResultsRouter] Klar med alla klubbar");
-    res.status(200).json({ message: "Resultatuppdatering slutförd" });
-  } catch (err) {
-    console.error("[GetResultsRouter] Fel i runGetResults:", err.stack || err.message);
-    res.status(500).json({ error: err.message });
+  const orgIds = req.body.organisationids;
+  if (!orgIds || !Array.isArray(orgIds)) {
+    return res.status(400).json({ error: "organisationids krävs som array" });
   }
+
+  console.log("[GetResultsRouter] Klubbar att köra:", orgIds.join(", "));
+
+  for (const organisationid of orgIds) {
+    console.log(`[GetResultsRouter] Kör fetchResultsForClub för organisationid=${organisationid}`);
+    try {
+      await fetchResultsForClub({ organisationId: organisationid });
+    } catch (error) {
+      console.error(`[GetResultsRouter] Fel vid körning för klubb ${organisationid}:`, error);
+      await insertLogData(supabase, {
+        source: "GetResultsRouter",
+        level: "error",
+        message: `Fel vid körning för klubb ${organisationid}: ${error.message}`,
+        organisationid: organisationid,
+        eventid: null,
+        batchid: null,
+      });
+    }
+    console.log(`[GetResultsRouter] Klar med organisationid=${organisationid}`);
+  }
+
+  console.log("[GetResultsRouter] Klar med alla klubbar");
+  res.status(200).json({ status: "klar" });
 });
 
 module.exports = router;
