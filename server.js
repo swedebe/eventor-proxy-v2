@@ -34,7 +34,7 @@ app.get('/api/eventor/results', async (req, res) => {
 
     const url = 'https://eventor.orientering.se/api/results/organisation';
 
-    // EXTRA LOGGNING
+    // DEBUGLOGG
     console.log('[Proxy] API-nyckel mottagen:', apiKey);
     console.log('[Proxy] Anropar Eventor med URL:', url);
     console.log('[Proxy] Parametrar:', {
@@ -43,8 +43,7 @@ app.get('/api/eventor/results', async (req, res) => {
       includeTrackCompetitors: false,
       includeSplitTimes: false,
       includeTimes: true,
-      includeAdditionalResultValues: false,
-      apiKey: apiKey
+      includeAdditionalResultValues: false
     });
 
     const response = await axios.get(url, {
@@ -54,10 +53,12 @@ app.get('/api/eventor/results', async (req, res) => {
         includeTrackCompetitors: false,
         includeSplitTimes: false,
         includeTimes: true,
-        includeAdditionalResultValues: false,
-        apiKey: apiKey
+        includeAdditionalResultValues: false
       },
-      headers: { Accept: 'application/xml' }
+      headers: {
+        Accept: 'application/xml',
+        ApiKey: apiKey // ✅ skickas som header
+      }
     });
 
     res.set('Content-Type', 'application/xml');
