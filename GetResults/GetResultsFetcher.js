@@ -1,222 +1,148 @@
-const axios = require("axios");
-const { parseStringPromise } = require("xml2js");
-const { logStart, logEnd } = require("./GetResultsLogger");
+// Uppdaterad GetResultsFetcher.js med batchid, dubblettvarning, robust felhantering och loggdata
 
-function convertTimeToSeconds(timeString) {
-  if (!timeString) return null;
-  const parts = timeString.split(":").map(p => parseInt(p, 10));
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  return null;
-}
+import { createClient } from '@supabase/supabase-js';
+import fetch from 'node-fetch';
+import parseResults from './parseResults.js';
+import { insertLogData } from '../shared/logHelpers.js';
 
-function parseResults(xml, organisationid, eventId, batchId) {
-  const results = [];
-  const classResults = [].concat(xml.ResultList?.ClassResult || []);
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
-  for (const classResult of classResults) {
-    const eventClass = classResult.EventClass?.[0] || {};
-    const className = eventClass.Name?.[0] || null;
-    const classTypeId = parseInt(eventClass.ClassTypeId?.[0] || 0);
-    const klassfaktor = classTypeId === 16 ? 125 : classTypeId === 17 ? 100 : classTypeId === 19 ? 75 : null;
+export default async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
+  const logContext = `[GetResults] Organisation ${organisationId} – Event ${eventId}`;
+  console.log(`${logContext}`);
 
-    const numberOfStarts = parseInt(
-      classResult.$?.numberOfStarts ||
-      classResult.numberOfStarts?.[0] ||
-      0
-    );
+  // Kontroll av tidigare rader
+  const { data: existingRows, error: existingError } = await supabase
+    .from('results')
+    .select('id')
+    .eq('organisationid', organisationId)
+    .eq('eventid', eventId);
 
-    const personResults = [].concat(classResult.PersonResult || []);
-    if (personResults.length === 0) continue;
+  if (existingError) {
+    console.error(`${logContext} Fel vid kontroll av befintliga rader:`, existingError);
+    await insertLogData(supabase, {
+      source: 'GetResultsFetcher',
+      level: 'error',
+      message: `Fel vid kontroll av befintliga rader: ${existingError.message}`,
+      organisationid: organisationId,
+      eventid: eventId,
+      batchid
+    });
+    return;
+  }
 
-    const raceIdStr = eventClass.ClassRaceInfo?.[0]?.EventRaceId?.[0];
-    if (!raceIdStr) {
-      console.warn(`[parseResults] Saknar EventRaceId i klass ${className}, hoppar över.`);
-      continue;
-    }
-
-    const raceId = parseInt(raceIdStr, 10);
-
-    for (const personResult of personResults) {
-      const person = personResult.Person?.[0] || {};
-      const result = personResult.Result?.[0] || {};
-      const race = personResult.RaceResult?.[0]?.Result?.[0] || result;
-
-      const personId = parseInt(person.PersonId?.[0] || 0);
-      const position = parseInt(race.ResultPosition?.[0] || 0);
-      const status = race.CompetitorStatus?.[0]?.$.value || "";
-      const time = convertTimeToSeconds(race.Time?.[0]);
-      const timeDiff = convertTimeToSeconds(race.TimeDiff?.[0]);
-
-      const poäng = klassfaktor && position && numberOfStarts
-        ? parseFloat((klassfaktor * (1 - (position / numberOfStarts))).toFixed(2))
-        : null;
-
-      results.push({
-        personid: personId,
+  const numberOfRowsBefore = existingRows.length;
+  if (numberOfRowsBefore > 0) {
+    console.log(`${logContext} ${numberOfRowsBefore} rader tas bort innan nyimport.`);
+    const { error: deleteError } = await supabase
+      .from('results')
+      .delete()
+      .eq('organisationid', organisationId)
+      .eq('eventid', eventId);
+    if (deleteError) {
+      console.error(`${logContext} Fel vid delete av tidigare rader:`, deleteError.message);
+      await insertLogData(supabase, {
+        source: 'GetResultsFetcher',
+        level: 'error',
+        message: `Fel vid delete av tidigare rader: ${deleteError.message}`,
+        organisationid: organisationId,
         eventid: eventId,
-        eventraceid: raceId,
-        eventclassname: className,
-        resulttime: time,
-        resulttimediff: timeDiff,
-        resultposition: position || null,
-        resultcompetitorstatus: status,
-        classresultnumberofstarts: numberOfStarts || null,
-        classtypeid: classTypeId || null,
-        klassfaktor,
-        points: poäng,
-        personage: null,
-        organisationid,
-        updatedbybatchid: batchId
+        batchid
+      });
+      return;
+    }
+  } else {
+    console.log(`${logContext} Inga tidigare resultat – nyimport.`);
+  }
+
+  const response = await fetch(`${process.env.SELF_BASE_URL}/api/eventor/results?eventId=${eventId}&organisationId=${organisationId}`);
+  const xml = await response.text();
+  const parsed = parseResults(xml);
+
+  if (!parsed || parsed.length === 0) {
+    console.log(`${logContext} 0 resultat hittades i Eventor`);
+    return;
+  }
+
+  // Dubblettvarning per (personid, eventraceid)
+  const seen = new Set();
+  const warnings = [];
+
+  for (const row of parsed) {
+    const key = `${row.personid}-${row.eventraceid}`;
+    if (seen.has(key)) {
+      warnings.push({
+        organisationid: organisationId,
+        eventid: eventId,
+        eventraceid: row.eventraceid,
+        personid: row.personid,
+        message: 'Duplicate personid+eventraceid in result set',
+        batchid
+      });
+    } else {
+      seen.add(key);
+    }
+    row.batchid = batchid;
+  }
+
+  if (warnings.length > 0) {
+    console.log(`${logContext} ${warnings.length} varningar loggas.`);
+    const { error: warnError } = await supabase.from('warnings').insert(warnings);
+    if (warnError) {
+      console.error(`${logContext} Fel vid insert till 'warnings':`, warnError.message);
+      await insertLogData(supabase, {
+        source: 'GetResultsFetcher',
+        level: 'error',
+        message: `Fel vid insert till warnings: ${warnError.message}`,
+        organisationid: organisationId,
+        eventid: eventId,
+        batchid
       });
     }
   }
 
-  return results;
-}
-
-async function fetchResultsForClub(supabase, organisationid, apikey) {
-  const batchStart = new Date().toISOString();
-  let totalInserted = 0;
-  let totalErrors = 0;
-  let batchId = null;
-  let totalRowsBefore = 0;
-  let totalRowsAfter = 0;
-
-  console.log(`[GetResults] === START club ${organisationid} ===`);
-
-  try {
-    const { data: batchrun, error: batchError } = await supabase
-      .from("batchrun")
-      .insert([{
-        organisationid,
-        starttime: batchStart,
-        status: "running",
-        comment: "GetResults",
-        numberofrequests: 0,
-        numberoferrors: 0,
-        numberofrowsbefore: 0,
-        numberofrowsafter: 0,
-        initiatedby: "manual",
-        renderjobid: null,
-        appversion: "v1"
-      }])
-      .select("id")
-      .single();
-
-    if (batchError) {
-      console.error(`[GetResults] Fel vid skapande av batchrun: ${batchError.message}`);
-    } else {
-      batchId = batchrun.id;
-      console.log(`[GetResults] Skapade batchrun med id ${batchId}`);
-    }
-  } catch (e) {
-    console.error(`[GetResults] Exception vid skapande av batchrun: ${e.message}`);
-  }
-
-  const { data: events, error: errEvents } = await supabase
-    .from("events")
-    .select("eventid")
-    .order("eventid", { ascending: true });
-
-  if (errEvents) {
-    console.error(`[GetResults] Fel vid hämtning av events: ${errEvents.message}`);
+  const { error: insertError } = await supabase.from('results').insert(parsed);
+  if (insertError) {
+    console.error(`${logContext} FEL vid insert till 'results':`, insertError.message);
+    console.error(`${logContext} Första raden i chunk:`, parsed[0]);
+    await insertLogData(supabase, {
+      source: 'GetResultsFetcher',
+      level: 'error',
+      message: `FEL vid insert till results: ${insertError.message}`,
+      organisationid: organisationId,
+      eventid: eventId,
+      batchid
+    });
     return;
   }
 
-  const uniqueEventIds = [...new Set(events.map(e => e.eventid))];
+  const { data: afterRows, error: afterError } = await supabase
+    .from('results')
+    .select('id')
+    .eq('organisationid', organisationId)
+    .eq('eventid', eventId);
 
-  for (const eventId of uniqueEventIds) {
-    console.log(`[GetResults] Organisation ${organisationid} – Event ${eventId}`);
-
-    const { count: rowsBefore, error: countErr } = await supabase
-      .from("results")
-      .select("*", { count: "exact", head: true })
-      .eq("organisationid", organisationid)
-      .eq("eventid", eventId);
-
-    if (countErr) {
-      console.error(`[GetResults] Fel vid räkning före delete: ${countErr.message}`);
-    } else {
-      totalRowsBefore += rowsBefore;
-    }
-
-    await supabase
-      .from("results")
-      .delete()
-      .match({ organisationid, eventid: eventId });
-
-    const url = `https://eventor.orientering.se/api/results/organisation?organisationIds=${organisationid}&eventId=${eventId}`;
-    const headers = { ApiKey: apikey, Accept: "application/xml" };
-
-    const logId = await logStart(supabase, url);
-
-    try {
-      const response = await axios.get(url, { headers, timeout: 30000 });
-      await logEnd(supabase, logId, response.status, null);
-
-      const xml = await parseStringPromise(response.data);
-      const parsedResults = parseResults(xml, organisationid, eventId, batchId);
-
-      console.log(`[GetResults] ${parsedResults.length} resultat hittades i Eventor`);
-
-      for (let i = 0; i < parsedResults.length; i += 500) {
-        const chunk = parsedResults.slice(i, i + 500);
-        const { error: insertError } = await supabase.from("results").insert(chunk);
-        if (insertError) {
-          console.error(`[GetResults] FEL vid insert till 'results': ${insertError.message}`);
-          console.error(`[GetResults] Första raden i chunk:`, JSON.stringify(chunk[0], null, 2));
-        }
-      }
-
-      totalInserted += parsedResults.length;
-      totalRowsAfter += parsedResults.length;
-
-      const { error: updateErr } = await supabase
-        .from("tableupdates")
-        .upsert({
-          tablename: "results",
-          lastupdated: new Date().toISOString(),
-          updatedbybatchid: batchId
-        });
-
-      if (updateErr) {
-        console.error(`[GetResults] Fel vid upsert till tableupdates: ${updateErr.message}`);
-      } else {
-        console.log(`[GetResults] tableupdates uppdaterad`);
-      }
-
-      console.log(`[GetResults] ${parsedResults.length} resultat har lagts in`);
-    } catch (error) {
-      totalErrors++;
-      const status = error.response?.status || "ERR";
-      const message = error.stack || error.message || "Okänt fel";
-      console.error(`[GetResults] Fel vid Event ${eventId}: ${message}`);
-      await logEnd(supabase, logId, status, message);
-    }
+  const numberOfRowsAfter = afterRows?.length ?? 0;
+  if (afterError) {
+    console.error(`${logContext} Fel vid räkning efter insert:`, afterError);
+    await insertLogData(supabase, {
+      source: 'GetResultsFetcher',
+      level: 'error',
+      message: `Fel vid räkning efter insert: ${afterError.message}`,
+      organisationid: organisationId,
+      eventid: eventId,
+      batchid
+    });
   }
 
-  if (batchId) {
-    const { error: batchUpdateErr } = await supabase
-      .from("batchrun")
-      .update({
-        endtime: new Date().toISOString(),
-        status: totalErrors > 0 ? "partial" : "success",
-        numberofrequests: uniqueEventIds.length,
-        numberoferrors: totalErrors,
-        numberofrowsbefore: totalRowsBefore,
-        numberofrowsafter: totalRowsAfter
-      })
-      .eq("id", batchId);
+  console.log(`${logContext} ${parsed.length} resultat har lagts in`);
 
-    if (batchUpdateErr) {
-      console.error(`[GetResults] Fel vid uppdatering av batchrun: ${batchUpdateErr.message}`);
-    } else {
-      console.log(`[GetResults] Batchrun ${batchId} uppdaterad`);
-    }
-  }
-
-  console.log(`[GetResults] === SLUT club ${organisationid} ===`);
+  return {
+    numberOfRowsBefore,
+    numberOfRowsAfter,
+    insertedCount: parsed.length
+  };
 }
-
-module.exports = { fetchResultsForClub };
