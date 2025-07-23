@@ -1,48 +1,46 @@
-const express = require('express');
-const dotenv = require('dotenv');
-const getEventsRouter = require('./GetEvents/GetEventsRouter');
-const getResultsRouter = require('./GetResults/GetResultsRouter');
+app.get('/api/eventor/results', async (req, res) => {
+  const { eventId, organisationId } = req.query;
 
-dotenv.config();
-
-const app = express();
-const PORT = process.env.PORT;
-
-app.use(express.json());
-
-// Endpoints för GetEvents och GetResults
-app.use('/api', getEventsRouter);
-app.use('/api', getResultsRouter);
-
-// Eventor-proxy (måste ligga efter interna endpoints)
-app.get('/api/*', async (req, res) => {
-  const path = req.originalUrl.replace('/api', '');
-  const url = `https://eventor.orientering.se/api${path}`;
-  const apiKey = req.query.apiKey || process.env.EVENTOR_API_KEY;
-
-  if (!apiKey) {
-    return res.status(400).send('Missing API key');
+  if (!eventId || !organisationId) {
+    return res.status(400).send('Missing eventId or organisationId');
   }
+
+  const { createClient } = require('@supabase/supabase-js');
+  const fetch = require('node-fetch');
+
+  const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+
+  // Hämta API-nyckeln från Supabase
+  const { data, error } = await supabase
+    .from('clubs')
+    .select('apikey')
+    .eq('organisationid', organisationId)
+    .single();
+
+  if (error || !data?.apikey) {
+    console.error(`[server.js] Kunde inte hämta apikey för organisationId=${organisationId}`, error?.message);
+    return res.status(500).send('Kunde inte hämta API-nyckel från databasen');
+  }
+
+  const apiKey = data.apikey;
+
+  // Skapa Eventor-URL med nyckel
+  const eventorUrl = `https://eventor.orientering.se/api/results/organisation?eventId=${eventId}&organisationId=${organisationId}&apiKey=${apiKey}`;
 
   try {
-    const axios = require('axios');
-    const response = await axios.get(url, {
-      headers: { ApiKey: apiKey },
-      responseType: 'text',
+    const response = await fetch(eventorUrl, {
+      headers: {
+        Accept: 'application/xml'
+      }
     });
 
-    res.set('Content-Type', 'application/xml');
-    res.status(response.status).send(response.data);
-  } catch (error) {
-    res.status(error.response?.status || 500).send(error.message);
+    const xml = await response.text();
+    return res.type('application/xml').send(xml);
+  } catch (err) {
+    console.error('[server.js] Fel vid hämtning från Eventor:', err.message);
+    return res.status(500).send('Fel vid hämtning från Eventor');
   }
-});
-
-// Hälso-check
-app.get('/', (req, res) => {
-  res.send('Eventor proxy is running.');
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
 });
