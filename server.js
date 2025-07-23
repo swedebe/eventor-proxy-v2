@@ -27,6 +27,7 @@ app.get('/api/eventor/results', async (req, res) => {
   try {
     const { organisationId, eventId } = req.query;
     const apiKey = req.headers['x-api-key'];
+    console.log('[Proxy] API-nyckel mottagen:', apiKey);
 
     if (!organisationId || !eventId || !apiKey) {
       return res.status(400).json({ error: 'Missing organisationId, eventId eller x-api-key' });
