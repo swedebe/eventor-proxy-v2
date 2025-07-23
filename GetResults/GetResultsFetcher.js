@@ -58,10 +58,11 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
   }
 
   const response = await fetch(`${process.env.SELF_BASE_URL}/api/eventor/results?eventId=${eventId}&organisationId=${organisationId}`, {
-  headers: {
-    'x-api-key': apikey
-  }
-});
+    headers: {
+      'x-api-key': apikey
+    }
+  });
+
   const xml = await response.text();
 
   let parsed;
@@ -153,7 +154,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
 
   const { data: afterRows, error: afterError } = await supabase
     .from('results')
-    .select('id')
+    .select('personid')
     .eq('clubparticipation', organisationId)
     .eq('eventid', eventId);
 
@@ -199,7 +200,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
   };
 }
 
-async function fetchResultsForClub({ organisationId, batchid }) {
+async function fetchResultsForClub({ organisationId, batchid, apikey }) {
   console.log(`[GetResults] === START club ${organisationId} ===`);
 
   const { data: events, error: eventsError } = await supabase
@@ -222,7 +223,8 @@ async function fetchResultsForClub({ organisationId, batchid }) {
     await fetchResultsForEvent({
       organisationId,
       eventId: event.eventid,
-      batchid
+      batchid,
+      apikey
     });
   }
 
