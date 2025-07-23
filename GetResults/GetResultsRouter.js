@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
-const fetchResultsForEvent = require('./GetResultsFetcher.js');
+const { fetchResultsForEvent } = require('./GetResultsFetcher.js');
 const { insertLogData } = require('./logHelpersGetResults.js');
 
 const supabase = createClient(
