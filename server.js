@@ -27,13 +27,26 @@ app.get('/api/eventor/results', async (req, res) => {
   try {
     const { organisationId, eventId } = req.query;
     const apiKey = req.headers['x-api-key'];
-    console.log('[Proxy] API-nyckel mottagen:', apiKey);
 
     if (!organisationId || !eventId || !apiKey) {
       return res.status(400).json({ error: 'Missing organisationId, eventId eller x-api-key' });
     }
 
     const url = 'https://eventor.orientering.se/api/results/organisation';
+
+    // EXTRA LOGGNING
+    console.log('[Proxy] API-nyckel mottagen:', apiKey);
+    console.log('[Proxy] Anropar Eventor med URL:', url);
+    console.log('[Proxy] Parametrar:', {
+      organisationIds: organisationId,
+      eventId: eventId,
+      includeTrackCompetitors: false,
+      includeSplitTimes: false,
+      includeTimes: true,
+      includeAdditionalResultValues: false,
+      apiKey: apiKey
+    });
+
     const response = await axios.get(url, {
       params: {
         organisationIds: organisationId,
