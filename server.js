@@ -22,41 +22,35 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-// Proxy för Eventor-anrop med dynamisk API-nyckel
+// Proxy för Eventor-anrop – använder x-api-key från headers
 app.get('/api/eventor/results', async (req, res) => {
   try {
     const { organisationId, eventId } = req.query;
-    if (!organisationId || !eventId) {
-      return res.status(400).json({ error: 'Missing organisationId or eventId' });
+    const apiKey = req.headers['x-api-key'];
+
+    if (!organisationId || !eventId || !apiKey) {
+      return res.status(400).json({ error: 'Missing organisationId, eventId eller x-api-key' });
     }
 
-    const { data: clubs, error } = await supabase
-      .from('clubs')
-      .select('apikey')
-      .eq('organisationid', organisationId)
-      .single();
-
-    if (error || !clubs?.apikey) {
-      return res.status(404).json({ error: 'API key not found for organisationId' });
-    }
-
-    const EVENTOR_API_KEY = clubs.apikey;
-    const EVENTOR_BASE_URL = 'https://eventor.orientering.se/api/results/organisation';
-    const response = await axios.get(EVENTOR_BASE_URL, {
+    const url = 'https://eventor.orientering.se/api/results/organisation';
+    const response = await axios.get(url, {
       params: {
-        organisationId,
-        eventId,
+        organisationIds: organisationId,
+        eventId: eventId,
         includeTrackCompetitors: false,
-        apiKey: EVENTOR_API_KEY,
+        includeSplitTimes: false,
+        includeTimes: true,
+        includeAdditionalResultValues: false,
+        apiKey: apiKey
       },
-      headers: { Accept: 'application/xml' },
+      headers: { Accept: 'application/xml' }
     });
 
     res.set('Content-Type', 'application/xml');
     res.status(200).send(response.data);
   } catch (err) {
     console.error('[Proxy error]', err.message);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', message: err.message });
   }
 });
 
