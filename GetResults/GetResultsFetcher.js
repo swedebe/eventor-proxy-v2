@@ -1,20 +1,19 @@
-// Uppdaterad GetResultsFetcher.js med batchid, dubblettvarning, robust felhantering och loggdata
+// Uppdaterad GetResultsFetcher.js med CommonJS-kompatibilitet, batchid, dubblettvarning och loggdata
 
-import { createClient } from '@supabase/supabase-js';
-import fetch from 'node-fetch';
-import parseResults from './parseResults.js';
-import { insertLogData } from '../shared/logHelpers.js';
+const { createClient } = require('@supabase/supabase-js');
+const fetch = require('node-fetch');
+const parseResults = require('./parseResults.js');
+const { insertLogData } = require('../shared/logHelpers.js');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-export default async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
+async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
   const logContext = `[GetResults] Organisation ${organisationId} – Event ${eventId}`;
   console.log(`${logContext}`);
 
-  // Kontroll av tidigare rader
   const { data: existingRows, error: existingError } = await supabase
     .from('results')
     .select('id')
@@ -67,7 +66,6 @@ export default async function fetchResultsForEvent({ organisationId, eventId, ba
     return;
   }
 
-  // Dubblettvarning per (personid, eventraceid)
   const seen = new Set();
   const warnings = [];
 
@@ -140,9 +138,31 @@ export default async function fetchResultsForEvent({ organisationId, eventId, ba
 
   console.log(`${logContext} ${parsed.length} resultat har lagts in`);
 
+  const { error: updateBatchError } = await supabase
+    .from('batchrun')
+    .update({
+      numberofrowsbefore: numberOfRowsBefore,
+      numberofrowsafter: numberOfRowsAfter
+    })
+    .eq('id', batchid);
+
+  if (updateBatchError) {
+    console.error(`${logContext} Fel vid uppdatering av batchrun:`, updateBatchError);
+    await insertLogData(supabase, {
+      source: 'GetResultsFetcher',
+      level: 'error',
+      message: `Fel vid uppdatering av batchrun: ${updateBatchError.message}`,
+      organisationid: organisationId,
+      eventid: eventId,
+      batchid
+    });
+  }
+
   return {
     numberOfRowsBefore,
     numberOfRowsAfter,
     insertedCount: parsed.length
   };
 }
+
+module.exports = fetchResultsForEvent;
