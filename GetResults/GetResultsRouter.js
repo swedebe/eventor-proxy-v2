@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const fetchResultsForClub = require("./GetResultsFetcher"); // Ändrat här
 const { createClient } = require("@supabase/supabase-js");
-const { insertLogData } = require("../shared/logHelpers");
+const { insertLogData } = require('./logHelpersGetResults.js');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
