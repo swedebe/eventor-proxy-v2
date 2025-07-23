@@ -59,26 +59,36 @@ async function runForClub(organisationId) {
   const batchid = batch.id;
   console.log(`[GetResults] Skapade batchrun med id ${batchid}`);
 
-  const { data: events, error: eventsError } = await supabase
+  const { data: eventOrgs, error: eventsError } = await supabase
     .from('eventorganisations')
-    .select('eventid, events (eventraceid)')
+    .select('eventid')
     .eq('organisationid', organisationId);
 
   if (eventsError) {
-    console.error('[GetResults] Fel vid hämtning av events:', eventsError.message);
+    console.error('[GetResults] Fel vid hämtning av eventorganisations:', eventsError.message);
     await insertLogData(supabase, {
       source: 'GetResultsRouter',
       level: 'error',
-      message: `Fel vid hämtning av events: ${eventsError.message}`,
+      message: `Fel vid hämtning av eventorganisations: ${eventsError.message}`,
       organisationid: organisationId,
       batchid
     });
     return;
   }
 
-  for (const event of events) {
-    const { eventid, events: { eventraceid } = {} } = event;
-    if (!eventraceid) continue;
+  const eventIds = eventOrgs.map(e => e.eventid);
+
+  for (const eventid of eventIds) {
+    const { data: eventData, error: eventError } = await supabase
+      .from('events')
+      .select('eventraceid')
+      .eq('eventid', eventid)
+      .maybeSingle();
+
+    if (eventError || !eventData?.eventraceid) {
+      console.warn(`[GetResults] Hoppar över event ${eventid} – kunde inte hämta eventraceid`);
+      continue;
+    }
 
     await fetchResultsForEvent({
       organisationId,
