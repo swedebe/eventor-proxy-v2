@@ -9,7 +9,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-router.get('/api/runGetResults', async (req, res) => {
+router.get('/runGetResults', async (req, res) => {
   console.log('[GetResultsRouter] Startar körning av resultatuppdatering');
 
   const { data: clubs, error: clubsError } = await supabase
