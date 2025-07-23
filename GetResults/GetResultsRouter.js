@@ -75,7 +75,12 @@ router.get('/api/runGetResults', async (req, res) => {
     let antalFel = 0;
 
     for (const eventId of uniqueEventIds) {
-      const result = await fetchResultsForEvent({ organisationId, eventId, batchid });
+      const result = await fetchResultsForEvent({
+        organisationId,
+        eventId,
+        batchid,
+        apikey: club.apikey
+      });
       if (!result) {
         antalFel++;
       } else {
