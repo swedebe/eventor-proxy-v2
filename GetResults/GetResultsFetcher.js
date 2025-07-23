@@ -1,8 +1,6 @@
-// GetResultsFetcher.js – CommonJS med dynamisk parser per eventform
-
 const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
-const { insertLogData } = require('../shared/logHelpers');
+const { insertLogData } = require('../shared/logHelpers.js');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -13,19 +11,20 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
   const logContext = `[GetResults] Organisation ${organisationId} – Event ${eventId}`;
   console.log(`${logContext}`);
 
-  // 1. Hämta eventform från Supabase
-  const { data: events, error: eventError } = await supabase
+  // Hämta event för att ta reda på eventform
+  const { data: eventRows, error: eventError } = await supabase
     .from('events')
     .select('eventform')
     .eq('eventid', eventId)
-    .single();
+    .limit(1)
+    .maybeSingle();
 
-  if (eventError || !events) {
-    console.error(`${logContext} Kunde inte läsa eventform:`, eventError?.message);
+  if (eventError) {
+    console.error(`${logContext} Fel vid hämtning av eventform:`, eventError);
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
-      message: `Kunde inte läsa eventform: ${eventError?.message}`,
+      message: `Fel vid hämtning av eventform: ${eventError.message}`,
       organisationid: organisationId,
       eventid: eventId,
       batchid
@@ -33,43 +32,20 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
     return;
   }
 
-  const eventform = events.eventform?.trim() ?? '';
+  const eventform = eventRows?.eventform ?? '';
   let parseResults;
 
-  // 2. Välj parser beroende på eventform
-  try {
-    if (!eventform) {
-      parseResults = require('./parsers/parseResultsStandard');
-    } else if (eventform === 'IndMultiDay') {
-      parseResults = require('./parsers/parseResultsMultiDay');
-    } else if (eventform === 'RelaySingleDay') {
-      parseResults = require('./parsers/parseResultsRelay');
-    } else {
-      console.warn(`${logContext} Okänt eventform: ${eventform}`);
-      await insertLogData(supabase, {
-        source: 'GetResultsFetcher',
-        level: 'warning',
-        message: `Okänt eventform: ${eventform}`,
-        organisationid: organisationId,
-        eventid: eventId,
-        batchid
-      });
-      return;
-    }
-  } catch (err) {
-    console.error(`${logContext} Kunde inte ladda parser:`, err.message);
-    await insertLogData(supabase, {
-      source: 'GetResultsFetcher',
-      level: 'error',
-      message: `Kunde inte ladda parser för eventform '${eventform}': ${err.message}`,
-      organisationid: organisationId,
-      eventid: eventId,
-      batchid
-    });
-    return;
+  if (!eventform) {
+    parseResults = require('./parseResultsStandard');
+  } else if (eventform === 'IndMultiDay') {
+    parseResults = require('./parseResultsMultiDay');
+  } else if (eventform === 'RelaySingleDay') {
+    parseResults = require('./parseResultsRelay');
+  } else {
+    console.warn(`${logContext} Okänt eventform: ${eventform} – standardparser används`);
+    parseResults = require('./parseResultsStandard');
   }
 
-  // 3. Kontrollera om det redan finns rader
   const { data: existingRows, error: existingError } = await supabase
     .from('results')
     .select('id')
@@ -113,7 +89,6 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
     console.log(`${logContext} Inga tidigare resultat – nyimport.`);
   }
 
-  // 4. Hämta och tolka XML
   const response = await fetch(`${process.env.SELF_BASE_URL}/api/eventor/results?eventId=${eventId}&organisationId=${organisationId}`);
   const xml = await response.text();
   const parsed = parseResults(xml);
