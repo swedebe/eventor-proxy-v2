@@ -1,119 +1,112 @@
 const express = require('express');
+const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
 const fetchResultsForEvent = require('./GetResultsFetcher.js');
 const { insertLogData } = require('./logHelpersGetResults.js');
 
-const router = express.Router();
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-router.get('/runGetResults', async (req, res) => {
+router.get('/api/runGetResults', async (req, res) => {
   console.log('[GetResultsRouter] Startar körning av resultatuppdatering');
 
-  const { data: clubs, error: clubsError } = await supabase
+  const { data: clubs, error: clubError } = await supabase
     .from('clubs')
-    .select('organisationid')
+    .select('organisationid, apikey')
     .not('apikey', 'is', null);
 
-  if (clubsError) {
-    console.error('[GetResultsRouter] Fel vid hämtning av klubbar:', clubsError.message);
-    return res.status(500).send('Fel vid hämtning av klubbar');
+  if (clubError) {
+    console.error('[GetResultsRouter] Fel vid hämtning av klubbar:', clubError.message);
+    res.status(500).json({ error: 'Fel vid hämtning av klubbar' });
+    return;
   }
 
   const organisationIds = clubs.map(c => c.organisationid);
   console.log('[GetResultsRouter] Klubbar att köra:', organisationIds.join(', '));
 
-  for (const organisationId of organisationIds) {
+  for (const club of clubs) {
+    const organisationId = club.organisationid;
     console.log(`[GetResultsRouter] Kör fetchResultsForClub för organisationid=${organisationId}`);
-    await runForClub(organisationId);
-  }
+    console.log(`[GetResults] === START club ${organisationId} ===`);
 
-  console.log('[GetResultsRouter] Klar med alla klubbar');
-  res.status(200).send('Körning slutförd');
-});
+    // Skapa batchrun
+    const { data: batch, error: batchError } = await supabase
+      .from('batchrun')
+      .insert({
+        clubparticipation: organisationId,
+        comment: 'GetResults',
+        status: 'started',
+        initiatedby: 'manual',
+        appversion: 'v1',
+        starttime: new Date().toISOString()
+      })
+      .select()
+      .single();
 
-async function runForClub(organisationId) {
-  console.log(`[GetResults] === START club ${organisationId} ===`);
-
-  const start = new Date().toISOString();
-  const { data: batch, error: batchError } = await supabase
-    .from('batchrun')
-    .insert({
-      organisationid: organisationId,
-      starttime: start,
-      comment: 'GetResults',
-      status: 'running',
-      initiatedby: 'manual',
-      appversion: 'v1'
-    })
-    .select()
-    .single();
-
-  if (batchError) {
-    console.error('[GetResults] Fel vid skapande av batchrun:', batchError.message);
-    return;
-  }
-
-  const batchid = batch.id;
-  console.log(`[GetResults] Skapade batchrun med id ${batchid}`);
-
-  const { data: eventOrgs, error: eventsError } = await supabase
-    .from('eventorganisations')
-    .select('eventid')
-    .eq('organisationid', organisationId);
-
-  if (eventsError) {
-    console.error('[GetResults] Fel vid hämtning av eventorganisations:', eventsError.message);
-    await insertLogData(supabase, {
-      source: 'GetResultsRouter',
-      level: 'error',
-      message: `Fel vid hämtning av eventorganisations: ${eventsError.message}`,
-      organisationid: organisationId,
-      batchid
-    });
-    return;
-  }
-
-  const eventIds = eventOrgs.map(e => e.eventid);
-
-  for (const eventid of eventIds) {
-    const { data: eventData, error: eventError } = await supabase
-      .from('events')
-      .select('eventraceid')
-      .eq('eventid', eventid)
-      .maybeSingle();
-
-    if (eventError || !eventData?.eventraceid) {
-      console.warn(`[GetResults] Hoppar över event ${eventid} – kunde inte hämta eventraceid`);
+    if (batchError) {
+      console.error(`[GetResults] Fel vid skapande av batchrun:`, batchError.message);
       continue;
     }
 
-    await fetchResultsForEvent({
-      organisationId,
-      eventId: eventid,
-      batchid
-    });
+    const batchid = batch.id;
 
-    const now = new Date().toISOString();
-    await supabase
-      .from('tableupdates')
-      .upsert({
-        tablename: 'results',
-        lastupdated: now,
+    const { data: eventList, error: eventError } = await supabase
+      .from('results')
+      .select('eventid')
+      .eq('clubparticipation', organisationId)
+      .order('eventid', { ascending: true });
+
+    if (eventError) {
+      console.error(`[GetResults] Fel vid hämtning av events:`, eventError.message);
+      await insertLogData(supabase, {
+        source: 'GetResultsRouter',
+        level: 'error',
+        message: `Fel vid hämtning av events: ${eventError.message}`,
+        organisationid: organisationId,
         batchid
       });
+      continue;
+    }
+
+    const uniqueEventIds = [...new Set(eventList.map(e => e.eventid))];
+
+    let antalOk = 0;
+    let antalFel = 0;
+
+    for (const eventId of uniqueEventIds) {
+      const result = await fetchResultsForEvent({ organisationId, eventId, batchid });
+      if (!result) {
+        antalFel++;
+      } else {
+        antalOk++;
+      }
+
+      await supabase
+        .from('tableupdates')
+        .upsert({
+          tablename: 'results',
+          lastupdated: new Date().toISOString(),
+          batchid
+        });
+    }
+
+    await supabase
+      .from('batchrun')
+      .update({
+        status: 'success',
+        endtime: new Date().toISOString(),
+        numberofrequests: antalOk + antalFel,
+        numberoferrors: antalFel
+      })
+      .eq('id', batchid);
+
+    console.log(`[GetResults] === SLUT club ${organisationId} ===`);
   }
 
-  const end = new Date().toISOString();
-  await supabase
-    .from('batchrun')
-    .update({ endtime: end, status: 'success' })
-    .eq('id', batchid);
-
-  console.log(`[GetResults] Batchrun ${batchid} uppdaterad`);
-  console.log(`[GetResults] === SLUT club ${organisationId} ===`);
-}
+  console.log('[GetResultsRouter] Klar med alla klubbar');
+  res.status(200).json({ message: 'Körning slutförd' });
+});
 
 module.exports = router;
