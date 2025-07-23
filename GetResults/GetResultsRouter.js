@@ -31,7 +31,6 @@ router.get('/api/runGetResults', async (req, res) => {
     console.log(`[GetResultsRouter] Kör fetchResultsForClub för organisationid=${organisationId}`);
     console.log(`[GetResults] === START club ${organisationId} ===`);
 
-    // Skapa batchrun
     const { data: batch, error: batchError } = await supabase
       .from('batchrun')
       .insert({
@@ -53,13 +52,12 @@ router.get('/api/runGetResults', async (req, res) => {
     const batchid = batch.id;
 
     const { data: eventList, error: eventError } = await supabase
-      .from('results')
+      .from('events')
       .select('eventid')
-      .eq('clubparticipation', organisationId)
       .order('eventid', { ascending: true });
 
     if (eventError) {
-      console.error(`[GetResults] Fel vid hämtning av events:`, eventError.message);
+      console.error(`[GetResults] Fel vid hämtning av events: ${eventError.message}`);
       await insertLogData(supabase, {
         source: 'GetResultsRouter',
         level: 'error',
@@ -71,6 +69,7 @@ router.get('/api/runGetResults', async (req, res) => {
     }
 
     const uniqueEventIds = [...new Set(eventList.map(e => e.eventid))];
+    console.log(`[GetResults] ${uniqueEventIds.length} eventid hittades i tabellen events`);
 
     let antalOk = 0;
     let antalFel = 0;
