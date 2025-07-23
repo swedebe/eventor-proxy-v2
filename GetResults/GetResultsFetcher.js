@@ -10,7 +10,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
+async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }) {
   const logContext = `[GetResults] Organisation ${organisationId} – Event ${eventId}`;
   console.log(`${logContext}`);
 
@@ -57,7 +57,11 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
     console.log(`${logContext} Inga tidigare resultat – nyimport.`);
   }
 
-  const response = await fetch(`${process.env.SELF_BASE_URL}/api/eventor/results?eventId=${eventId}&organisationId=${organisationId}`);
+  const response = await fetch(`${process.env.SELF_BASE_URL}/api/eventor/results?eventId=${eventId}&organisationId=${organisationId}`, {
+  headers: {
+    'x-api-key': apikey
+  }
+});
   const xml = await response.text();
 
   let parsed;
