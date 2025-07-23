@@ -141,8 +141,13 @@ async function fetchResultsForClub(supabase, organisationid, apikey) {
 
       for (let i = 0; i < parsedResults.length; i += 500) {
         const chunk = parsedResults.slice(i, i + 500);
-        await supabase.from("results").insert(chunk);
-      }
+        const { error: insertError } = await supabase.from("results").insert(chunk);
+        if (insertError) {
+    console.error(`[GetResults] FEL vid insert till 'results': ${insertError.message}`);
+    console.error(`[GetResults] Första raden i chunk:`, JSON.stringify(chunk[0], null, 2));
+  }
+}
+
 
       totalInserted += parsedResults.length;
 
