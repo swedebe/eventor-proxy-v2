@@ -1,6 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
-const { insertLogData } = require('../shared/logHelpers.js');
+const { insertLogData } = require('./logHelpersGetResults.js');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
