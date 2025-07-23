@@ -77,7 +77,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid }) {
     console.log(`${logContext} Inga tidigare resultat – nyimport.`);
   }
 
-  const url = `${process.env.SELF_BASE_URL}/api/eventor/results?eventId=${eventId}&organisationId=${organisationId}&apikey=${club.apikey}`;
+  const url = `https://eventor.orientering.se/api/results/organisation?organisationId=${organisationId}&eventId=${eventId}&apiKey=${club.apikey}`;
   const response = await fetch(url);
   const xml = await response.text();
 
