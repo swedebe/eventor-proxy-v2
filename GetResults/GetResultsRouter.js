@@ -12,7 +12,6 @@ const supabase = createClient(
 router.get('/api/runGetResults', async (req, res) => {
   console.log('[GetResultsRouter] Startar körning av resultatuppdatering');
 
-  // 1. Hämta klubb-id:n som har en API-nyckel
   const { data: clubs, error: clubsError } = await supabase
     .from('clubs')
     .select('organisationid')
@@ -80,7 +79,7 @@ async function runForClub(organisationId) {
 
   for (const event of events) {
     const { eventid } = event;
-    const result = await fetchResultsForEvent({
+    await fetchResultsForEvent({
       organisationId,
       eventId: eventid,
       batchid
