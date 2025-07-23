@@ -60,10 +60,9 @@ async function runForClub(organisationId) {
   console.log(`[GetResults] Skapade batchrun med id ${batchid}`);
 
   const { data: events, error: eventsError } = await supabase
-    .from('events')
-    .select('eventid, eventraceid')
-    .eq('organisationid', organisationId)
-    .order('eventid', { ascending: true });
+    .from('eventorganisations')
+    .select('eventid, events (eventraceid)')
+    .eq('organisationid', organisationId);
 
   if (eventsError) {
     console.error('[GetResults] Fel vid hämtning av events:', eventsError.message);
@@ -78,7 +77,9 @@ async function runForClub(organisationId) {
   }
 
   for (const event of events) {
-    const { eventid } = event;
+    const { eventid, events: { eventraceid } = {} } = event;
+    if (!eventraceid) continue;
+
     await fetchResultsForEvent({
       organisationId,
       eventId: eventid,
