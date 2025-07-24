@@ -13,9 +13,11 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 // Routrar
 const getEventsRouter = require('./GetEvents/GetEventsRouter.js');
 const getResultsRouter = require('./GetResults/GetResultsRouter.js');
+const getEventsTestRouter = require('./GetEvents/GetEventsTestRouter');
 
 app.use('/api', getEventsRouter);
 app.use('/api', getResultsRouter);
+app.use('/api', getEventsTestRouter);
 
 // Health check
 app.get('/health', (req, res) => {
