@@ -3,7 +3,7 @@ const { XMLParser } = require("fast-xml-parser");
 function parseResultsStandard(xmlString) {
   const parser = new XMLParser({
     ignoreAttributes: false,
-    attributeNamePrefix: '',
+    attributeNamePrefix: '@_',
     parseTagValue: true
   });
 
@@ -19,7 +19,7 @@ function parseResultsStandard(xmlString) {
 
   for (const classResult of classResults) {
     const eventClass = classResult.EventClass?.Name;
-    const classStarts = parseInt(classResult.ClassRaceInfo?.noOfStarts ?? 0, 10);
+    const classStarts = parseInt(classResult.EventClass?.ClassRaceInfo?.['@_noOfStarts'] ?? 0, 10);
     const classTypeId = getClassTypeId(eventClass);
     const klassfaktor = getKlassFaktor(eventClass);
 
@@ -30,6 +30,13 @@ function parseResultsStandard(xmlString) {
     for (const result of results) {
       if (!result || !result.Person || !result.Person.PersonId) continue;
 
+      const resultposition = toIntOrNull(result.Result?.ResultPosition);
+
+      let points = null;
+      if (klassfaktor && resultposition != null && classStarts > 0) {
+        points = Math.round(klassfaktor * (1 - (resultposition / classStarts)) * 100) / 100;
+      }
+
       const row = {
         personid: parseInt(result.Person.PersonId),
         eventid: parseInt(parsed.ResultList.Event.EventId),
@@ -37,12 +44,12 @@ function parseResultsStandard(xmlString) {
         eventclassname: eventClass,
         resulttime: toSeconds(result.Result?.Time),
         resulttimediff: toSeconds(result.Result?.TimeDiff),
-        resultposition: toIntOrNull(result.Result?.ResultPosition),
+        resultposition,
         resultcompetitorstatus: result.Result?.CompetitorStatus?.value ?? null,
         classresultnumberofstarts: classStarts,
         classtypeid: classTypeId,
-        klassfaktor: klassfaktor,
-        points: toFloatOrNull(result.Result?.Points),
+        klassfaktor,
+        points,
         personage: toIntOrNull(result.Person?.Age)
       };
 
@@ -71,11 +78,6 @@ function toSeconds(value) {
 function toIntOrNull(v) {
   const n = parseInt(v);
   return isNaN(n) ? null : n;
-}
-
-function toFloatOrNull(v) {
-  const f = parseFloat(v);
-  return isNaN(f) ? null : f;
 }
 
 function getClassTypeId(name) {
