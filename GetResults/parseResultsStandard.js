@@ -43,8 +43,7 @@ function parseResultsStandard(xmlString) {
         classtypeid: classTypeId,
         klassfaktor: klassfaktor,
         points: toFloatOrNull(result.Result?.Points),
-        personage: toIntOrNull(result.Person?.Age),
-        organisationid: parseInt(result.Organisation?.OrganisationId ?? 0)
+        personage: toIntOrNull(result.Person?.Age)
       };
 
       output.push(row);
