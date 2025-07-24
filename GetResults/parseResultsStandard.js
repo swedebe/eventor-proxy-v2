@@ -19,7 +19,7 @@ function parseResultsStandard(xmlString) {
 
   for (const classResult of classResults) {
     const eventClass = classResult.EventClass?.Name;
-    const classStarts = parseInt(classResult.ClassRaceInfo?.NumberOfStarts ?? 0, 10);
+    const classStarts = parseInt(classResult.ClassRaceInfo?.noOfStarts ?? 0, 10);
     const classTypeId = getClassTypeId(eventClass);
     const klassfaktor = getKlassFaktor(eventClass);
 
@@ -28,17 +28,17 @@ function parseResultsStandard(xmlString) {
       : [classResult.PersonResult];
 
     for (const result of results) {
-      if (!result || !result.Person || !result.Person.PersonId?.['@_id']) continue;
+      if (!result || !result.Person || !result.Person.PersonId) continue;
 
       const row = {
-        personid: parseInt(result.Person.PersonId['@_id']),
+        personid: parseInt(result.Person.PersonId),
         eventid: parseInt(parsed.ResultList.Event.EventId),
-        eventraceid: parseInt(result.Result?.EventRaceId ?? 0),
+        eventraceid: parseInt(classResult.EventClass?.ClassRaceInfo?.EventRaceId ?? 0),
         eventclassname: eventClass,
         resulttime: toSeconds(result.Result?.Time),
         resulttimediff: toSeconds(result.Result?.TimeDiff),
-        resultposition: toIntOrNull(result.Result?.Position),
-        resultcompetitorstatus: result.Result?.CompetitorStatus?.['@_value'] ?? null,
+        resultposition: toIntOrNull(result.Result?.ResultPosition),
+        resultcompetitorstatus: result.Result?.CompetitorStatus?.value ?? null,
         classresultnumberofstarts: classStarts,
         classtypeid: classTypeId,
         klassfaktor: klassfaktor,
