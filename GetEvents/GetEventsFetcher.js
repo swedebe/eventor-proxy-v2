@@ -15,11 +15,13 @@ async function fetchAndStoreEvents(organisationId) {
   const renderJobId = null;
   const comment = 'Hämtning av events';
 
+  console.log('[GetEvents] Initierar batchrun med organisationId:', organisationId);
+
   const { data: batchData, error: batchError } = await supabase
     .from('batchrun')
     .insert([
       {
-        organisationid: organisationId,
+        clubparticipation: organisationId,
         starttime: new Date().toISOString(),
         status: 'running',
         comment,
@@ -33,10 +35,12 @@ async function fetchAndStoreEvents(organisationId) {
     .single();
 
   if (batchError || !batchData?.id) {
+    console.error('[GetEvents] Fel vid skapande av batchrun:', batchError);
     throw new Error('Kunde inte skapa batchrun');
   }
 
   const batchId = batchData.id;
+  console.log('[GetEvents] Skapade batchrun med ID:', batchId);
 
   const { data: club, error: clubError } = await supabase
     .from('clubs')
@@ -45,6 +49,7 @@ async function fetchAndStoreEvents(organisationId) {
     .single();
 
   if (clubError || !club?.apikey) {
+    console.error('[GetEvents] Saknar API-nyckel för organisationId:', organisationId);
     throw new Error('API-nyckel saknas för angiven organisation');
   }
 
@@ -81,6 +86,7 @@ async function fetchAndStoreEvents(organisationId) {
       .eq('id', log.id);
   } catch (err) {
     numberOfErrors = 1;
+    console.error('[GetEvents] Fel vid anrop till Eventor:', err.message);
 
     await supabase
       .from('logdata')
@@ -106,14 +112,15 @@ async function fetchAndStoreEvents(organisationId) {
 
   const result = await parseStringPromise(xml);
 
-  // Hämta alla klubbnamn som lookup-tabell
   const { data: eventorclubs, error: lookupError } = await supabase
     .from('eventorclubs')
     .select('organisationid, clubname');
 
   if (lookupError) {
+    console.error('[GetEvents] Kunde inte hämta eventorclubs:', lookupError);
     throw new Error('Kunde inte hämta klubbnamn från eventorclubs');
   }
+
   const clubMap = Object.fromEntries(eventorclubs.map(c => [String(c.organisationid), c.clubname]));
 
   const events = (result.EventList?.Event || []).flatMap((event) => {
