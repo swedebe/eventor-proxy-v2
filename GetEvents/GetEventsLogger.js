@@ -5,14 +5,14 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 // Loggar ett API-anrop till tabellen logdata
-async function logApiCall(supabaseClient, request, started, finished, status, errorMessage) {
+async function logApiCall(supabaseClient, request, started, completed, status, errorMessage) {
   const { error } = await supabaseClient
     .from('logdata')
     .insert([
       {
         request,
         started: started.toISOString(),
-        ended: finished.toISOString(),
+        completed: completed.toISOString(), // korrekt kolumnnamn
         statuscode: status,
         errormessage: errorMessage || null,
       },
@@ -43,7 +43,7 @@ async function logBatchStart(supabaseClient, organisationid, comment) {
     throw new Error('Kunde inte logga batchstart');
   }
 
-  return { batchid: data.id }; // så att vi kan använda batchid i resten av koden
+  return { batchid: data.id }; // så vi kan använda batchid vidare i testet
 }
 
 // Avslutar en batchkörning med status success/fail
@@ -55,7 +55,7 @@ async function logBatchEnd(supabaseClient, batchid, status, comment) {
       status,
       comment: comment || null,
     })
-    .eq('id', batchid);
+    .eq('id', batchid); // korrekt nyckelkolumn
 
   if (error) {
     console.error('Fel vid loggning av batchslut:', error.message);
