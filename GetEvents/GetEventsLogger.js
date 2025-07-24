@@ -31,7 +31,7 @@ async function logBatchStart(supabaseClient, type, organisationid, comment) {
       {
         starttime: new Date().toISOString(),
         type,
-        organisationid,
+        clubparticipation: organisationid,
         comment: comment || null,
         status: 'started',
       },
