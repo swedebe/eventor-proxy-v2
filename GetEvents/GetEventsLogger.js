@@ -13,7 +13,7 @@ async function logApiCall(supabaseClient, request, started, completed, status, e
         request,
         started: started.toISOString(),
         completed: completed.toISOString(), // korrekt kolumnnamn
-        statuscode: status,
+        status,
         errormessage: errorMessage || null,
       },
     ]);
