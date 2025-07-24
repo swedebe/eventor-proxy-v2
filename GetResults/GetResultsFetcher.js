@@ -95,10 +95,12 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     return;
   }
 
-  if (!parsed || parsed.length === 0) {
-    console.log(`${logContext} 0 resultat hittades i Eventor`);
-    return;
-  }
+if (!parsed || parsed.length === 0) {
+  console.log(`${logContext} 0 resultat hittades i Eventor`);
+  return;
+} else {
+  console.log(`${logContext} ${parsed.length} resultat tolkades från XML`);
+}
 
   const seen = new Set();
   const warnings = [];
