@@ -12,7 +12,7 @@ async function logApiCall(supabaseClient, request, started, finished, status, er
       {
         request,
         started: started.toISOString(),
-        finished: finished.toISOString(),
+        ended: finished.toISOString(),
         statuscode: status,
         errormessage: errorMessage || null,
       },
