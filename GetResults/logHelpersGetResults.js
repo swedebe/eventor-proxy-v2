@@ -3,18 +3,20 @@
 async function insertLogData(supabase, {
   source,
   level,
-  message,
+  errormessage = null,
   organisationid = null,
   eventid = null,
-  batchid = null
+  batchid = null,
+  request = null
 }) {
   const { error } = await supabase.from('logdata').insert([{
     source,
     level,
-    message,
+    errormessage,
     organisationid,
     eventid,
     batchid,
+    request,
     timestamp: new Date().toISOString()
   }]);
 
