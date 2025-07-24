@@ -27,7 +27,6 @@ router.post('/test-events', async (req, res) => {
   let insertedEventRaces = 0;
 
   try {
-    // Ta bort ev. tidigare rader
     const { count: countEventRaces } = await supabase
       .from('eventraces')
       .delete()
