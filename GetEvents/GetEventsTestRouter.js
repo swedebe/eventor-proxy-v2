@@ -19,7 +19,7 @@ router.post('/test-events', async (req, res) => {
   const apiKey = req.body.apikey || process.env.EVENTOR_API_KEY;
 
   console.log(`[GetEventsTestRouter] Startar testimport för organisation ${organisationId}`);
-  const batchInfo = await logBatchStart(supabase, 'Uppdatera tävlingar (TEST)', organisationId, 'TEST GetEvents');
+  const batchInfo = await logBatchStart(supabase, organisationId, 'TEST GetEvents');
 
   let deletedEvents = 0;
   let deletedEventRaces = 0;
