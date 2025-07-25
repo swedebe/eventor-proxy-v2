@@ -12,10 +12,14 @@ const EVENTOR_API_BASE = 'https://eventor.orientering.se/api';
 async function fetchAndStoreEvents(organisationId) {
   const initiatedBy = 'manual';
   const appVersion = null;
-  const renderJobId = null;
+  const renderJobId = process.env.RENDER_JOB_ID || null;
   const comment = 'Hämtning av events';
 
   console.log('[GetEvents] Initierar batchrun med organisationId:', organisationId);
+
+  const { count: beforeCount } = await supabase
+    .from('events')
+    .select('*', { count: 'exact', head: true });
 
   const { data: batchData, error: batchError } = await supabase
     .from('batchrun')
@@ -29,6 +33,7 @@ async function fetchAndStoreEvents(organisationId) {
         initiatedby: initiatedBy,
         renderjobid: renderJobId,
         appversion: appVersion,
+        numberofrowsbefore: beforeCount || 0,
       },
     ])
     .select()
@@ -190,12 +195,17 @@ async function fetchAndStoreEvents(organisationId) {
     }
   }
 
+  const { count: afterCount } = await supabase
+    .from('events')
+    .select('*', { count: 'exact', head: true });
+
   await supabase
     .from('batchrun')
     .update({
       endtime: new Date().toISOString(),
       status: numberOfErrors === 0 ? 'success' : 'partial',
       numberoferrors: numberOfErrors,
+      numberofrowsafter: afterCount || 0,
     })
     .eq('id', batchId);
 
