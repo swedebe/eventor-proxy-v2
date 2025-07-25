@@ -16,10 +16,22 @@ router.post('/test-events', async (req, res) => {
     return res.status(400).json({ error: 'organisationId is required' });
   }
 
-  const apiKey = req.body.apikey || process.env.EVENTOR_API_KEY;
-
   console.log(`[GetEventsTestRouter] Startar testimport för organisation ${organisationId}`);
   const batchInfo = await logBatchStart(supabase, organisationId, 'TEST GetEvents');
+
+  // Hämta API-nyckel från Supabase
+  const { data: club, error: clubError } = await supabase
+    .from('clubs')
+    .select('apikey')
+    .eq('organisationid', organisationId)
+    .single();
+
+  if (clubError || !club?.apikey) {
+    await logBatchEnd(supabase, batchInfo.batchid, 'fail', 'API-nyckel saknas');
+    return res.status(400).json({ error: 'API-nyckel saknas för organisationen' });
+  }
+
+  const apiKey = club.apikey;
 
   let deletedEvents = 0;
   let deletedEventRaces = 0;
@@ -27,7 +39,6 @@ router.post('/test-events', async (req, res) => {
   let insertedEventRaces = 0;
 
   try {
-    // Ta bort ev. tidigare rader
     const { count: countEventRaces } = await supabase
       .from('eventraces')
       .delete()
@@ -54,7 +65,7 @@ router.post('/test-events', async (req, res) => {
 
       try {
         const response = await axios.get(url, {
-          headers: { 'ApiKey': apiKey },
+          headers: { ApiKey: apiKey },
         });
 
         await logApiCall(supabase, url, started, new Date(), '200 OK', null);
@@ -70,7 +81,6 @@ router.post('/test-events', async (req, res) => {
         const errorMsg = err.response?.data || err.message;
 
         console.error(`[GetEventsTestRouter] Fel vid hämtning av eventId=${eventId}:`, responseCode, errorMsg);
-
         await logApiCall(supabase, url, started, new Date(), `${responseCode}`, errorMsg);
         throw new Error(`Kunde inte hämta eventId=${eventId}`);
       }
