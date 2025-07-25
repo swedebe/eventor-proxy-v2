@@ -27,6 +27,7 @@ router.post('/test-events', async (req, res) => {
   let insertedEventRaces = 0;
 
   try {
+    // Ta bort ev. tidigare rader
     const { count: countEventRaces } = await supabase
       .from('eventraces')
       .delete()
@@ -51,23 +52,27 @@ router.post('/test-events', async (req, res) => {
       const started = new Date();
       console.log(`[GetEventsTestRouter] Hämtar eventId=${eventId}`);
 
-      let response;
       try {
-        response = await axios.get(url, {
+        const response = await axios.get(url, {
           headers: { 'ApiKey': apiKey },
         });
+
+        await logApiCall(supabase, url, started, new Date(), '200 OK', null);
+
+        const eventList = response.data?.EventList?.Event;
+        if (Array.isArray(eventList)) {
+          allEvents.push(...eventList);
+        } else if (eventList) {
+          allEvents.push(eventList);
+        }
       } catch (err) {
-        await logApiCall(supabase, url, started, new Date(), err.response?.status || 500, err.message);
+        const responseCode = err.response?.status || 500;
+        const errorMsg = err.response?.data || err.message;
+
+        console.error(`[GetEventsTestRouter] Fel vid hämtning av eventId=${eventId}:`, responseCode, errorMsg);
+
+        await logApiCall(supabase, url, started, new Date(), `${responseCode}`, errorMsg);
         throw new Error(`Kunde inte hämta eventId=${eventId}`);
-      }
-
-      await logApiCall(supabase, url, started, new Date(), 200, null);
-
-      const eventList = response.data?.EventList?.Event;
-      if (Array.isArray(eventList)) {
-        allEvents.push(...eventList);
-      } else if (eventList) {
-        allEvents.push(eventList);
       }
     }
 
