@@ -3,12 +3,16 @@ const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 const { logApiCall, logBatchStart, logBatchEnd } = require('./GetEventsLogger');
 const { saveEventsToSupabase } = require('./GetEventsFetcher');
+const { parseStringPromise } = require('xml2js');
 
 const router = express.Router();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 const EVENTOR_API_BASE = 'https://eventor.orientering.se/api';
 
-const testEventIds = [46964, 51284, 44952];
+const testDates = [
+  '2024-07-09',
+  '2024-10-12'
+];
 
 router.post('/test-events', async (req, res) => {
   const organisationId = req.body.organisationId;
@@ -32,36 +36,16 @@ router.post('/test-events', async (req, res) => {
   }
 
   const apiKey = club.apikey;
-
-  let deletedEvents = 0;
-  let deletedEventRaces = 0;
-  let insertedEvents = 0;
-  let insertedEventRaces = 0;
+  const allEvents = [];
 
   try {
-    const { count: countEventRaces } = await supabase
-      .from('eventraces')
-      .delete()
-      .in('eventid', testEventIds)
-      .select('*', { count: 'exact' });
+    for (const date of testDates) {
+      const fromDate = `${date} 00:00:00`;
+      const toDate = `${date} 23:59:59`;
+      const url = `${EVENTOR_API_BASE}/events?fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}&classificationIds=1,2,3,6&EventStatusId=3`;
 
-    const { count: countEvents } = await supabase
-      .from('events')
-      .delete()
-      .in('eventid', testEventIds)
-      .select('*', { count: 'exact' });
-
-    deletedEventRaces = countEventRaces || 0;
-    deletedEvents = countEvents || 0;
-
-    console.log(`[GetEventsTestRouter] Raderade ${deletedEvents} events och ${deletedEventRaces} eventraces`);
-
-    const allEvents = [];
-
-    for (const eventId of testEventIds) {
-      const url = `${EVENTOR_API_BASE}/events?eventId=${eventId}`;
       const started = new Date();
-      console.log(`[GetEventsTestRouter] Hämtar eventId=${eventId}`);
+      console.log(`[GetEventsTestRouter] Hämtar datum ${date}`);
 
       try {
         const response = await axios.get(url, {
@@ -70,37 +54,39 @@ router.post('/test-events', async (req, res) => {
 
         await logApiCall(supabase, url, started, new Date(), '200 OK', null);
 
-        const eventList = response.data?.EventList?.Event;
+        const xml = response.data;
+        const parsed = await parseStringPromise(xml);
+        const eventList = parsed?.EventList?.Event;
         if (Array.isArray(eventList)) {
           allEvents.push(...eventList);
         } else if (eventList) {
           allEvents.push(eventList);
         }
+
       } catch (err) {
         const responseCode = err.response?.status || 500;
         const errorMsg = err.response?.data || err.message;
 
-        console.error(`[GetEventsTestRouter] Fel vid hämtning av eventId=${eventId}:`, responseCode, errorMsg);
+        console.error(`[GetEventsTestRouter] Fel vid hämtning av datum ${date}:`, responseCode, errorMsg);
         await logApiCall(supabase, url, started, new Date(), `${responseCode}`, errorMsg);
-        throw new Error(`Kunde inte hämta eventId=${eventId}`);
+        throw new Error(`Kunde inte hämta tävlingar för datum ${date}`);
       }
     }
 
     const saveResult = await saveEventsToSupabase(supabase, allEvents, organisationId, batchInfo.batchid);
-    insertedEvents = saveResult.eventCount;
-    insertedEventRaces = saveResult.raceCount;
+    const insertedEvents = saveResult.eventCount;
+    const insertedEventRaces = saveResult.raceCount;
 
     await logBatchEnd(supabase, batchInfo.batchid, 'success', `Testimport färdig: ${insertedEvents} events`);
-    console.log(`[GetEventsTestRouter] Import klar. ${insertedEvents} events och ${insertedEventRaces} eventraces importerade.`);
 
+    console.log(`[GetEventsTestRouter] Import klar. ${insertedEvents} events och ${insertedEventRaces} eventraces importerade.`);
     res.json({
       success: true,
-      deletedEvents,
-      deletedEventRaces,
       insertedEvents,
       insertedEventRaces,
       batchid: batchInfo.batchid,
     });
+
   } catch (err) {
     console.error('[GetEventsTestRouter] Fel under testimport:', err.message);
     await logBatchEnd(supabase, batchInfo.batchid, 'fail', err.message);
