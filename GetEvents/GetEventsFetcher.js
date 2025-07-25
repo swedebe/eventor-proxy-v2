@@ -12,7 +12,7 @@ const EVENTOR_API_BASE = 'https://eventor.orientering.se/api';
 async function fetchAndStoreEvents(organisationId) {
   const initiatedBy = 'manual';
   const appVersion = null;
-  const renderJobId = process.env.RENDER_JOB_ID || null;
+  const renderJobId = process.env.RENDER_INSTANCE_ID || null;
   const comment = 'Hämtning av events';
 
   console.log('[GetEvents] Initierar batchrun med organisationId:', organisationId);
