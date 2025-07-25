@@ -1,6 +1,6 @@
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
-const { logApiCall } = require('./GetEventsLogger');
+const { logApiCallSimple } = require('./GetEventsLogger');
 const { parseStringPromise } = require('xml2js');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -64,7 +64,7 @@ async function fetchAndStoreEvents(organisationId) {
     fromDateStr
   )}&toDate=${encodeURIComponent(toDateStr)}&classificationIds=1,2,3,6&EventStatusId=3`;
 
-  const log = await logApiCall({ request: url });
+  const log = await logApiCallSimple({ request: url });
 
   let xml;
   let numberOfErrors = 0;
