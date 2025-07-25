@@ -216,9 +216,4 @@ async function fetchAndStoreEvents(organisationId) {
   return { insertedCount: inserted.length };
 }
 
-// OBS: Både fetchAndStoreEvents och saveEventsToSupabase används i produktion eller tester.
-// Ta INTE bort någon av dessa – används av bl.a. GetEventsTestRouter.js
-module.exports = {
-  fetchAndStoreEvents,
-  saveEventsToSupabase
-};
+module.exports = { fetchAndStoreEvents };
