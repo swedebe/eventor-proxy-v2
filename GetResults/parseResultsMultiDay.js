@@ -9,7 +9,18 @@ function parseResultsMultiDay(xmlString) {
 
   const parsed = parser.parse(xmlString);
 
-  if (!parsed || !parsed.ResultList || !parsed.ResultList.ClassResult) return [];
+  if (!parsed || !parsed.ResultList) {
+    console.warn('[parseResultsMultiDay] Ingen ResultList i XML');
+    return [];
+  }
+
+  console.log('[parseResultsMultiDay] XML-parsing lyckades, loggar hela ResultList:');
+  console.log(JSON.stringify(parsed.ResultList, null, 2));
+
+  if (!parsed.ResultList.ClassResult) {
+    console.warn('[parseResultsMultiDay] ResultList finns men saknar ClassResult');
+    return [];
+  }
 
   const classResults = Array.isArray(parsed.ResultList.ClassResult)
     ? parsed.ResultList.ClassResult
@@ -25,7 +36,7 @@ function parseResultsMultiDay(xmlString) {
 
     const results = Array.isArray(classResult.PersonResult)
       ? classResult.PersonResult
-      : [classResult.PersonResult];
+      : classResult.PersonResult ? [classResult.PersonResult] : [];
 
     for (const result of results) {
       const resultBlocks = Array.isArray(result.Result)
@@ -33,12 +44,13 @@ function parseResultsMultiDay(xmlString) {
         : result.Result ? [result.Result] : [];
 
       for (const r of resultBlocks) {
-        if (!r || !r.EventRaceId) continue; // Skippa summerade totalresultat
+        const eventRaceId = parseInt(r?.EventRaceId ?? 0, 10);
+        if (!r || !eventRaceId) continue;
 
         const row = {
           personid: parseInt(result.Person?.PersonId?.['@_id'] ?? 0),
           eventid: parseInt(parsed.ResultList.Event.EventId),
-          eventraceid: parseInt(r.EventRaceId),
+          eventraceid: eventRaceId,
           eventclassname: eventClass,
           resulttime: toSeconds(r.Time),
           resulttimediff: toSeconds(r.TimeDiff),
@@ -57,6 +69,7 @@ function parseResultsMultiDay(xmlString) {
     }
   }
 
+  console.log(`[parseResultsMultiDay] Antal resultatrader: ${output.length}`);
   return output;
 }
 
