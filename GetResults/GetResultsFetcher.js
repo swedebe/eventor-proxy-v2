@@ -25,7 +25,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
-      message: `Fel vid kontroll av befintliga rader: ${existingError.message}`,
+      errormessage: `Fel vid kontroll av befintliga rader: ${existingError.message}`,
       organisationid: organisationId,
       eventid: eventId,
       batchid
@@ -46,7 +46,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       await insertLogData(supabase, {
         source: 'GetResultsFetcher',
         level: 'error',
-        message: `Fel vid delete av tidigare rader: ${deleteError.message}`,
+        errormessage: `Fel vid delete av tidigare rader: ${deleteError.message}`,
         organisationid: organisationId,
         eventid: eventId,
         batchid
@@ -87,7 +87,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
-      message: `Fel vid parsning av resultat: ${parseError.message}`,
+      errormessage: `Fel vid parsning av resultat: ${parseError.message}`,
       organisationid: organisationId,
       eventid: eventId,
       batchid
@@ -95,48 +95,16 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     return;
   }
 
-if (!parsed || parsed.length === 0) {
-  console.log(`${logContext} 0 resultat hittades i Eventor`);
-  return;
-} else {
-  console.log(`${logContext} ${parsed.length} resultat tolkades från XML`);
-}
-
-  const seen = new Set();
-  const warnings = [];
-
-  for (const row of parsed) {
-    const key = `${row.personid}-${row.eventraceid}`;
-    if (seen.has(key)) {
-      warnings.push({
-        clubparticipation: organisationId,
-        eventid: eventId,
-        eventraceid: row.eventraceid,
-        personid: row.personid,
-        message: 'Duplicate personid+eventraceid in result set',
-        batchid
-      });
-    } else {
-      seen.add(key);
-    }
-    row.batchid = batchid;
-    row.clubparticipation = organisationId;
+  if (!parsed || parsed.length === 0) {
+    console.log(`${logContext} 0 resultat hittades i Eventor`);
+    return;
+  } else {
+    console.log(`${logContext} ${parsed.length} resultat tolkades från XML`);
   }
 
-  if (warnings.length > 0) {
-    console.log(`${logContext} ${warnings.length} varningar loggas.`);
-    const { error: warnError } = await supabase.from('warnings').insert(warnings);
-    if (warnError) {
-      console.error(`${logContext} Fel vid insert till 'warnings':`, warnError.message);
-      await insertLogData(supabase, {
-        source: 'GetResultsFetcher',
-        level: 'error',
-        message: `Fel vid insert till warnings: ${warnError.message}`,
-        organisationid: organisationId,
-        eventid: eventId,
-        batchid
-      });
-    }
+  for (const row of parsed) {
+    row.batchid = batchid;
+    row.clubparticipation = organisationId;
   }
 
   const { error: insertError } = await supabase.from('results').insert(parsed);
@@ -146,7 +114,7 @@ if (!parsed || parsed.length === 0) {
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
-      message: `FEL vid insert till results: ${insertError.message}`,
+      errormessage: `FEL vid insert till results: ${insertError.message}`,
       organisationid: organisationId,
       eventid: eventId,
       batchid
@@ -166,7 +134,7 @@ if (!parsed || parsed.length === 0) {
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
-      message: `Fel vid räkning efter insert: ${afterError.message}`,
+      errormessage: `Fel vid räkning efter insert: ${afterError.message}`,
       organisationid: organisationId,
       eventid: eventId,
       batchid
@@ -188,7 +156,7 @@ if (!parsed || parsed.length === 0) {
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
-      message: `Fel vid uppdatering av batchrun: ${updateBatchError.message}`,
+      errormessage: `Fel vid uppdatering av batchrun: ${updateBatchError.message}`,
       organisationid: organisationId,
       eventid: eventId,
       batchid
@@ -214,7 +182,7 @@ async function fetchResultsForClub({ organisationId, batchid, apikey }) {
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
-      message: `Fel vid hämtning av events: ${eventsError?.message}`,
+      errormessage: `Fel vid hämtning av events: ${eventsError?.message}`,
       organisationid: organisationId,
       batchid
     });
