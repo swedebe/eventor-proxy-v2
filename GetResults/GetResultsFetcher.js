@@ -73,7 +73,8 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       .eq('eventid', eventId)
       .single();
 
-    const eventform = eventformRes?.data?.eventform || '';
+const eventform = eventformRes?.data?.eventform || '';
+console.log(`${logContext} Eventform är: ${eventform}`);
 
     if (eventform === 'IndMultiDay') {
       parsed = parseResultsMultiDay(xml);
