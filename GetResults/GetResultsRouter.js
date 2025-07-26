@@ -39,6 +39,7 @@ router.get('/runGetResults', async (req, res) => {
         status: 'started',
         initiatedby: 'manual',
         appversion: 'v1',
+        renderjobid: process.env.RENDER_JOB_ID || null,  // NY RAD
         starttime: new Date().toISOString()
       })
       .select()
