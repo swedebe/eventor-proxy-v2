@@ -64,6 +64,7 @@ function parseResultsMultiDay(xmlString) {
           organisationid: parseInt(result.Organisation?.OrganisationId ?? 0)
         };
 
+        console.log('[parseResultsMultiDay] Lägg till row:', JSON.stringify(row, null, 2));
         output.push(row);
       }
     }
