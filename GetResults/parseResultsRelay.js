@@ -1,6 +1,6 @@
 const { XMLParser } = require("fast-xml-parser");
 
-function parseResultsRelay(xmlString) {
+function parseResultsMultiDay(xmlString) {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '',
@@ -10,6 +10,15 @@ function parseResultsRelay(xmlString) {
   const parsed = parser.parse(xmlString);
 
   if (!parsed || !parsed.ResultList || !parsed.ResultList.ClassResult) return [];
+
+  // TILLFÄLLIG LOGG för felsökning:
+  try {
+    console.log('[parseResultsMultiDay] Exempelresultat:', JSON.stringify(
+      parsed.ResultList.ClassResult?.[0]?.PersonResult?.[0], null, 2
+    ));
+  } catch (e) {
+    console.warn('[parseResultsMultiDay] Kunde inte logga exempelresultat:', e.message);
+  }
 
   const classResults = Array.isArray(parsed.ResultList.ClassResult)
     ? parsed.ResultList.ClassResult
@@ -23,31 +32,34 @@ function parseResultsRelay(xmlString) {
     const classTypeId = getClassTypeId(eventClass);
     const klassfaktor = getKlassFaktor(eventClass);
 
-    const teamResults = Array.isArray(classResult.TeamResult)
-      ? classResult.TeamResult
-      : classResult.TeamResult ? [classResult.TeamResult] : [];
+    const results = Array.isArray(classResult.PersonResult)
+      ? classResult.PersonResult
+      : classResult.PersonResult ? [classResult.PersonResult] : [];
 
-    for (const team of teamResults) {
-      const legs = Array.isArray(team.Leg)
-        ? team.Leg
-        : team.Leg ? [team.Leg] : [];
+    for (const result of results) {
+      const resultBlocks = Array.isArray(result.Result)
+        ? result.Result
+        : result.Result ? [result.Result] : [];
 
-      for (const leg of legs) {
+      for (const r of resultBlocks) {
+        const eventRaceId = parseInt(r?.EventRaceId ?? 0, 10);
+        if (!r || !eventRaceId) continue; // Skippa summerade totalresultat eller tomma
+
         const row = {
-          personid: parseInt(leg.Person?.PersonId?.['@_id'] ?? 0),
+          personid: parseInt(result.Person?.PersonId?.['@_id'] ?? 0),
           eventid: parseInt(parsed.ResultList.Event.EventId),
-          eventraceid: parseInt(leg.EventRaceId),
+          eventraceid: eventRaceId,
           eventclassname: eventClass,
-          resulttime: toSeconds(leg.Time),
-          resulttimediff: toSeconds(leg.TimeDiff),
-          resultposition: toIntOrNull(leg.Position),
-          resultcompetitorstatus: leg.CompetitorStatus?.['@_value'] ?? null,
+          resulttime: toSeconds(r.Time),
+          resulttimediff: toSeconds(r.TimeDiff),
+          resultposition: toIntOrNull(r.Position),
+          resultcompetitorstatus: r.CompetitorStatus?.['@_value'] ?? null,
           classresultnumberofstarts: classStarts,
           classtypeid: classTypeId,
           klassfaktor: klassfaktor,
-          points: toFloatOrNull(leg.Points),
-          personage: toIntOrNull(leg.Person?.Age),
-          organisationid: parseInt(leg.Organisation?.OrganisationId ?? 0)
+          points: toFloatOrNull(r.Points),
+          personage: toIntOrNull(result.Person?.Age),
+          organisationid: parseInt(result.Organisation?.OrganisationId ?? 0)
         };
 
         output.push(row);
@@ -96,4 +108,4 @@ function getKlassFaktor(name) {
   return 100;
 }
 
-module.exports = parseResultsRelay;
+module.exports = parseResultsMultiDay;
