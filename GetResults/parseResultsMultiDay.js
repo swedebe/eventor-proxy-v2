@@ -48,7 +48,7 @@ function parseResultsMultiDay(xmlString) {
         if (!r || !eventRaceId) continue;
 
         const row = {
-          personid: parseInt(result.Person?.PersonId?.['@_id'] ?? 0),
+          personid: parseInt(result.Person?.PersonId?.id ?? 0),
           eventid: parseInt(parsed.ResultList.Event.EventId),
           eventraceid: eventRaceId,
           eventclassname: eventClass,
