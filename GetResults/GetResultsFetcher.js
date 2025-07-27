@@ -5,6 +5,9 @@ const parseResultsMultiDay = require('./parseResultsMultiDay.js');
 const parseResultsRelay = require('./parseResultsRelay.js');
 const { insertLogData } = require('./logHelpersGetResults.js');
 
+// DEBUG: Bekräfta att rätt nyckel används
+console.log('[DEBUG] SUPABASE_SERVICE_ROLE_KEY börjar med:', process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(0, 8));
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
