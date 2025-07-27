@@ -73,8 +73,8 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       .eq('eventid', eventId)
       .single();
 
-const eventform = eventformRes?.data?.eventform || '';
-console.log(`${logContext} Eventform är: ${eventform}`);
+    const eventform = eventformRes?.data?.eventform || '';
+    console.log(`${logContext} Eventform är: ${eventform}`);
 
     if (eventform === 'IndMultiDay') {
       parsed = parseResultsMultiDay(xml);
@@ -111,7 +111,7 @@ console.log(`${logContext} Eventform är: ${eventform}`);
   const { error: insertError } = await supabase.from('results').insert(parsed);
   if (insertError) {
     console.error(`${logContext} FEL vid insert till 'results':`, insertError.message);
-    console.error(`${logContext} Första raden i chunk:`, parsed[0]);
+    console.error(`${logContext} Första raden som försöktes insertas:`, JSON.stringify(parsed[0], null, 2));
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
