@@ -28,10 +28,10 @@ function parseResultsMultiDay(xmlString) {
   for (const classResult of classResults) {
     const eventClass = classResult.EventClass?.Name;
     const classStarts = parseInt(classResult.ClassRaceInfo?.NumberOfStarts ?? 0, 10);
-    const classTypeId = getClassTypeId(eventClass);
+    const classTypeId = parseInt(classResult.EventClass?.ClassTypeId ?? 0, 10);
     const klassfaktor = getKlassFaktor(eventClass);
 
-    if (classTypeId === 0 && eventClass) {
+    if (!classTypeId && eventClass) {
       console.warn(`[parseResultsMultiDay][Warning] Okänd klass: "${eventClass}" => classtypeid sätts till 0`);
     }
 
@@ -63,7 +63,6 @@ function parseResultsMultiDay(xmlString) {
           klassfaktor: klassfaktor,
           points: toFloatOrNull(r.Points),
           personage: toIntOrNull(result.Person?.Age)
-          // organisationid tas bort!
         };
 
         output.push(row);
@@ -98,13 +97,6 @@ function toIntOrNull(v) {
 function toFloatOrNull(v) {
   const f = parseFloat(v);
   return isNaN(f) ? null : f;
-}
-
-function getClassTypeId(name) {
-  if (!name) return 0;
-  if (name.match(/^(H|D|Open|Motion|Inskolning|U|Ö|N)/)) return 17;
-  if (name.match(/^(Blå|Grön|Gul|Orange|Svart)/)) return 19;
-  return 0;
 }
 
 function getKlassFaktor(name) {
