@@ -108,7 +108,11 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     row.clubparticipation = organisationId;
   }
 
-  const { error: insertError } = await supabase.from('results').insert(parsed);
+  const { data: insertData, error: insertError, status } = await supabase.from('results').insert(parsed);
+
+  console.log(`${logContext} Insertstatus: ${status}`);
+  console.log(`${logContext} Supabase insertData:`, insertData);
+
   if (insertError) {
     console.error(`${logContext} FEL vid insert till 'results':`, insertError.message);
     console.error(`${logContext} Första raden som försöktes insertas:`, JSON.stringify(parsed[0], null, 2));
