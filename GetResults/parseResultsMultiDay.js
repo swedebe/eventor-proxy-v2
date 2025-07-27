@@ -14,9 +14,6 @@ function parseResultsMultiDay(xmlString) {
     return [];
   }
 
-  console.log('[parseResultsMultiDay] XML-parsing lyckades, loggar hela ResultList:');
-  console.log(JSON.stringify(parsed.ResultList, null, 2));
-
   if (!parsed.ResultList.ClassResult) {
     console.warn('[parseResultsMultiDay] ResultList finns men saknar ClassResult');
     return [];
@@ -48,11 +45,12 @@ function parseResultsMultiDay(xmlString) {
         : result.Result ? [result.Result] : [];
 
       for (const r of resultBlocks) {
+        const personid = parseInt(result.Person?.PersonId?.id ?? 0);
         const eventRaceId = parseInt(r?.EventRaceId ?? 0, 10);
-        if (!r || !eventRaceId) continue;
+        if (!r || !eventRaceId || !personid) continue;
 
         const row = {
-          personid: parseInt(result.Person?.PersonId?.id ?? 0),
+          personid,
           eventid: parseInt(parsed.ResultList.Event.EventId),
           eventraceid: eventRaceId,
           eventclassname: eventClass,
@@ -64,11 +62,10 @@ function parseResultsMultiDay(xmlString) {
           classtypeid: classTypeId,
           klassfaktor: klassfaktor,
           points: toFloatOrNull(r.Points),
-          personage: toIntOrNull(result.Person?.Age),
-          organisationid: parseInt(result.Organisation?.OrganisationId ?? 0)
+          personage: toIntOrNull(result.Person?.Age)
+          // organisationid tas bort!
         };
 
-        console.log('[parseResultsMultiDay] Lägg till row:', JSON.stringify(row, null, 2));
         output.push(row);
       }
     }
@@ -107,7 +104,7 @@ function getClassTypeId(name) {
   if (!name) return 0;
   if (name.match(/^(H|D|Open|Motion|Inskolning|U|Ö|N)/)) return 17;
   if (name.match(/^(Blå|Grön|Gul|Orange|Svart)/)) return 19;
-  return 0; // fallback för okända klasser
+  return 0;
 }
 
 function getKlassFaktor(name) {
