@@ -104,4 +104,4 @@ function getKlassFaktor(name) {
   if (name.match(/^(Blå|Orange|Grön|Gul|Svart)/)) return 75;
   return 100;
 }
-module.exports = parseResults
+module.exports = parseResultsMultiDay;
