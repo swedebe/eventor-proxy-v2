@@ -10,9 +10,9 @@ function parseResults(xml, eventId, clubId, batchId, eventdate) {
   const results = [];
   const warnings = [];
 
-  const classResults = Array.isArray(xml.ResultList.ClassResult)
-    ? xml.ResultList.ClassResult
-    : [xml.ResultList.ClassResult];
+  const classResults = Array.isArray(xml.ClassResult)
+    ? xml.ClassResult
+    : [xml.ClassResult];
 
   for (const classResult of classResults) {
     const eventClass = classResult.EventClass;
