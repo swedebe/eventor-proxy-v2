@@ -70,6 +70,26 @@ function parseResultsMultiDay(xmlString) {
     }
   }
 
+  if (output.length === 0) {
+    console.log('[parseResultsMultiDay] Inga riktiga rader hittades – skickar in mockrad för test.');
+
+    output.push({
+      personid: 999999,
+      eventid: 12345,
+      eventraceid: 1234567,
+      eventclassname: "Testklass",
+      resulttime: 1234,
+      resulttimediff: 10,
+      resultposition: 1,
+      resultcompetitorstatus: "OK",
+      classresultnumberofstarts: 100,
+      classtypeid: 19,
+      klassfaktor: 100,
+      points: 99.9,
+      personage: 30
+    });
+  }
+
   console.log(`[parseResultsMultiDay] Antal resultatrader: ${output.length}`);
   return output;
 }
