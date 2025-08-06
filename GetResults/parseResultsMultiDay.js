@@ -1,4 +1,3 @@
-// GetResults/parseResultsMultiDay.js
 function parseTimeToSeconds(timeStr) {
   if (!timeStr) return null;
   const parts = timeStr.split(':').map(Number);
@@ -11,19 +10,16 @@ function parseResults(xml, eventId, clubId, batchId, eventdate) {
   const results = [];
   const warnings = [];
 
-  const classes = Array.isArray(xml.ResultList.ClassResult)
+  const classResults = Array.isArray(xml.ResultList.ClassResult)
     ? xml.ResultList.ClassResult
     : [xml.ResultList.ClassResult];
 
-  for (const classResult of classes) {
+  for (const classResult of classResults) {
     const eventClass = classResult.EventClass;
-    if (!eventClass || !eventClass.EventClassId) continue;
+    const eventClassName = eventClass?.Name || null;
+    const classTypeId = Number(eventClass?.ClassTypeId) || 0;
 
-    const eventClassName = eventClass.Name;
-    const eventClassId = eventClass.EventClassId;
-    const classTypeId = Number(eventClass.ClassTypeId) || 0;
-
-    if (classTypeId === 0) {
+    if (classTypeId === 0 && eventClassName) {
       warnings.push(`[parseResultsMultiDay][Warning] Okänd klass: "${eventClassName}" => classtypeid sätts till 0`);
     }
 
@@ -33,39 +29,40 @@ function parseResults(xml, eventId, clubId, batchId, eventdate) {
       classTypeId === 19 ? 75 :
       null;
 
-    const classresultnumberofstarts = Number(classResult.numberOfStarts) || null;
+    const classRaceInfo = Array.isArray(classResult.ClassRaceInfo)
+      ? classResult.ClassRaceInfo[0]
+      : classResult.ClassRaceInfo;
+    const classresultnumberofstarts = classRaceInfo?.noOfStarts
+      ? Number(classRaceInfo.noOfStarts)
+      : null;
 
-    const classRaceInfos = Array.isArray(eventClass.ClassRaceInfo)
-      ? eventClass.ClassRaceInfo
-      : [eventClass.ClassRaceInfo];
-
-    const eventRaceIds = classRaceInfos.map(cr => Number(cr?.EventRaceId)).filter(Boolean);
-
-    const persons = Array.isArray(classResult.PersonResult)
+    const personResults = Array.isArray(classResult.PersonResult)
       ? classResult.PersonResult
       : [classResult.PersonResult];
 
-    for (const personResult of persons) {
-      const person = personResult.Person;
-      const personId = Number(person?.PersonId);
-      const sex = person?.sex || null;
-      const birthYear = person?.BirthDate?.Date?.split('-')[0];
-      const personage = birthYear ? Number(eventdate.split('-')[0]) - Number(birthYear) : null;
+    for (const personResult of personResults) {
+      const personId = Number(personResult?.Person?.PersonId?.id);
+      const birthDate = personResult?.Person?.BirthDate?.Date;
+      const birthYear = birthDate ? parseInt(birthDate.split('-')[0]) : null;
+      const eventYear = parseInt(eventdate.split('-')[0]);
+      const personage = birthYear ? eventYear - birthYear : null;
 
-      const races = Array.isArray(personResult.RaceResult)
-        ? personResult.RaceResult
-        : [personResult.RaceResult];
+      const resultBlock = personResult.Result;
 
-      for (const raceResult of races) {
-        const eventRaceId = Number(raceResult?.EventRaceId);
-        if (!eventRaceIds.includes(eventRaceId)) continue;
+      if (!resultBlock) continue;
 
-        const result = raceResult.Result;
-        if (!result || result.CompetitorStatus?.value !== 'OK') continue;
+      const resultsArray = Array.isArray(resultBlock) ? resultBlock : [resultBlock];
 
-        const resulttime = parseTimeToSeconds(result.Time);
-        const resulttimediff = parseTimeToSeconds(result.TimeDiff);
-        const resultposition = Number(result.ResultPosition);
+      for (const r of resultsArray) {
+        const status = r.CompetitorStatus?.value || null;
+        if (status !== 'OK') continue;
+
+        const eventRaceId = Number(r.EventRaceId);
+        if (!eventRaceId || !personId) continue;
+
+        const resulttime = parseTimeToSeconds(r.Time);
+        const resulttimediff = parseTimeToSeconds(r.TimeDiff);
+        const resultposition = r.Position ? Number(r.Position) : null;
 
         const points = (klassfaktor && resultposition && classresultnumberofstarts)
           ? Math.round((klassfaktor * (1 - (resultposition / classresultnumberofstarts))) * 100) / 100
@@ -79,7 +76,7 @@ function parseResults(xml, eventId, clubId, batchId, eventdate) {
           resulttime,
           resulttimediff,
           resultposition,
-          resultcompetitorstatus: result.CompetitorStatus?.value || null,
+          resultcompetitorstatus: status,
           classresultnumberofstarts,
           classtypeid: classTypeId,
           klassfaktor,
