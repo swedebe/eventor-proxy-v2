@@ -70,26 +70,6 @@ function parseResultsMultiDay(xmlString) {
     }
   }
 
-  if (output.length === 0) {
-    console.log('[parseResultsMultiDay] Inga riktiga rader hittades – skickar in mockrad för test.');
-
-    output.push({
-      personid: 1,
-      eventid: 44022,
-      eventraceid: 45607,
-      eventclassname: "Testklass",
-      resulttime: 1234,
-      resulttimediff: 10,
-      resultposition: 1,
-      resultcompetitorstatus: "OK",
-      classresultnumberofstarts: 100,
-      classtypeid: 19,
-      klassfaktor: 100,
-      points: 99.9,
-      personage: 30
-    });
-  }
-
   console.log(`[parseResultsMultiDay] Antal resultatrader: ${output.length}`);
   return output;
 }
@@ -124,5 +104,4 @@ function getKlassFaktor(name) {
   if (name.match(/^(Blå|Orange|Grön|Gul|Svart)/)) return 75;
   return 100;
 }
-
-module.exports = parseResultsMultiDay;
+module.exports = parseResults
