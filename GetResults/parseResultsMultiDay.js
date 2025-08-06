@@ -74,9 +74,9 @@ function parseResultsMultiDay(xmlString) {
     console.log('[parseResultsMultiDay] Inga riktiga rader hittades – skickar in mockrad för test.');
 
     output.push({
-      personid: 999999,
-      eventid: 12345,
-      eventraceid: 1234567,
+      personid: 1,
+      eventid: 44022,
+      eventraceid: 45607,
       eventclassname: "Testklass",
       resulttime: 1234,
       resulttimediff: 10,
