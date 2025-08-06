@@ -15,6 +15,7 @@ function parseResults(xml, eventId, clubId, batchId, eventdate) {
     : [xml.ClassResult];
 
   for (const classResult of classResults) {
+    if (!classResult?.EventClass) continue;
     const eventClass = classResult.EventClass;
     const eventClassName = eventClass?.Name || null;
     const classTypeId = Number(eventClass?.ClassTypeId) || 0;
@@ -94,3 +95,4 @@ function parseResults(xml, eventId, clubId, batchId, eventdate) {
 }
 
 module.exports = parseResults;
+
