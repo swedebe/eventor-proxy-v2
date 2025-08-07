@@ -76,12 +76,24 @@ router.get('/runGetResults', async (req, res) => {
     let antalFel = 0;
 
     for (const eventId of uniqueEventIds) {
+      console.log(`[GetResults] Kör resultatimport för eventid=${eventId}`);
+
+      await insertLogData(supabase, {
+        source: 'GetResultsRouter',
+        level: 'info',
+        organisationid: organisationId,
+        eventid,
+        batchid,
+        request: `Import av resultat för eventid=${eventId}`
+      });
+
       const result = await fetchResultsForEvent({
         organisationId,
         eventId,
         batchid,
         apikey: club.apikey
       });
+
       if (!result) {
         antalFel++;
       } else {
