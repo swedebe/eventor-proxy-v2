@@ -1,34 +1,25 @@
-function parseTimeToSeconds(timeStr) {
-  if (!timeStr) return null;
-  const parts = timeStr.split(':').map(Number);
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  return null;
-}
+const { XMLParser } = require("fast-xml-parser");
 
-function parseResults(xml, eventId, clubId, batchId, eventdate) {
+function parseResultsMultiDay(xmlString, eventId, organisationId, batchId, eventdate) {
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '',
+    parseTagValue: true
+  });
+
+  const parsed = parser.parse(xmlString);
+
   const results = [];
-  const warnings = [];
+  const personResultCount = {};
 
-  const classResults = Array.isArray(xml.ClassResult)
-    ? xml.ClassResult
-    : [xml.ClassResult];
+  const classResults = Array.isArray(parsed?.ResultList?.ClassResult)
+    ? parsed.ResultList.ClassResult
+    : [parsed?.ResultList?.ClassResult].filter(Boolean);
 
   for (const classResult of classResults) {
-    if (!classResult?.EventClass) {
-      console.log('[DEBUG] Hoppar över ClassResult utan EventClass');
-      continue;
-    }
-
-    const eventClass = classResult.EventClass;
+    const eventClass = classResult?.EventClass;
     const eventClassName = eventClass?.Name || null;
-    const classTypeId = Number(eventClass?.ClassTypeId) || 0;
-
-    console.log('[DEBUG] Bearbetar klass:', eventClassName, 'classtypeid:', classTypeId);
-
-    if (classTypeId === 0 && eventClassName) {
-      warnings.push(`[parseResultsMultiDay][Warning] Okänd klass: "${eventClassName}" => classtypeid sätts till 0`);
-    }
+    const classTypeId = parseInt(eventClass?.ClassTypeId || '0');
 
     const klassfaktor =
       classTypeId === 16 ? 125 :
@@ -36,81 +27,86 @@ function parseResults(xml, eventId, clubId, batchId, eventdate) {
       classTypeId === 19 ? 75 :
       null;
 
-    const classRaceInfo = Array.isArray(classResult.ClassRaceInfo)
-      ? classResult.ClassRaceInfo[0]
-      : classResult.ClassRaceInfo;
-
-    const classresultnumberofstarts = classRaceInfo?.noOfStarts
-      ? Number(classRaceInfo.noOfStarts)
-      : null;
-
     const personResults = Array.isArray(classResult.PersonResult)
       ? classResult.PersonResult
-      : [classResult.PersonResult];
+      : [classResult.PersonResult].filter(Boolean);
 
     for (const personResult of personResults) {
-      const personId = Number(personResult?.Person?.PersonId?.id);
-      const birthDate = personResult?.Person?.BirthDate?.Date;
-      const birthYear = birthDate ? parseInt(birthDate.split('-')[0]) : null;
-      const eventYear = parseInt(eventdate.split('-')[0]);
-      const personage = birthYear ? eventYear - birthYear : null;
+      const personId = parseInt(personResult?.Person?.PersonId || '0');
+      if (!personId) continue;
 
-      console.log('[DEBUG] PersonId:', personId, 'Age:', personage);
+      const organisation = personResult?.Organisation;
+      const organisationIdFromResult = parseInt(organisation?.OrganisationId || '0');
 
-      const resultBlock = personResult.Result;
+      const raceResults = Array.isArray(personResult?.RaceResult)
+        ? personResult.RaceResult
+        : [personResult?.RaceResult].filter(Boolean);
 
-      if (!resultBlock) {
-        console.log('[DEBUG] Inga Result-block för person:', personId);
-        continue;
-      }
+      for (const raceResult of raceResults) {
+        const result = raceResult?.Result;
+        if (!result || result?.CompetitorStatus?.value !== 'OK') continue;
 
-      const resultsArray = Array.isArray(resultBlock) ? resultBlock : [resultBlock];
+        const eventRaceId = parseInt(raceResult?.EventRaceId || '0');
+        const resulttime = toSeconds(result?.Time);
+        const resulttimediff = toSeconds(result?.TimeDiff);
+        const resultposition = parseInt(result?.ResultPosition || '0');
 
-      for (const r of resultsArray) {
-        const status = r.CompetitorStatus?.value || null;
-        const eventRaceId = Number(r.EventRaceId);
-        const resulttime = r.Time;
+        const numberOfStarts = null; // enligt instruktion, dessa värden kan ej användas
 
-        console.log('[DEBUG] Kontroll av resultat:', {
-          personId,
-          eventRaceId,
-          status,
-          resulttime
-        });
-
-        if (status !== 'OK') continue;
-        if (!eventRaceId || !personId) continue;
-
-        const resulttimediff = parseTimeToSeconds(r.TimeDiff);
-        const resultposition = r.Position ? Number(r.Position) : null;
-
-        const points = (klassfaktor && resultposition && classresultnumberofstarts)
-          ? Math.round((klassfaktor * (1 - (resultposition / classresultnumberofstarts))) * 100) / 100
+        const points = (klassfaktor && resultposition && numberOfStarts)
+          ? Math.round((klassfaktor * (1 - (resultposition / numberOfStarts))) * 100) / 100
           : null;
 
-        results.push({
+        const birthDate = personResult?.Person?.BirthDate?.Date;
+        const birthYear = birthDate ? parseInt(birthDate.split('-')[0]) : null;
+        const eventYear = eventdate ? parseInt(eventdate.split('-')[0]) : null;
+        const personage = (birthYear && eventYear) ? eventYear - birthYear : null;
+
+        const row = {
           personid: personId,
           eventid: eventId,
           eventraceid: eventRaceId,
           eventclassname: eventClassName,
-          resulttime: parseTimeToSeconds(resulttime),
+          resulttime,
           resulttimediff,
           resultposition,
-          resultcompetitorstatus: status,
-          classresultnumberofstarts,
+          resultcompetitorstatus: result?.CompetitorStatus?.value || null,
+          classresultnumberofstarts: numberOfStarts,
           classtypeid: classTypeId,
           klassfaktor,
           points,
           personage,
           batchid: batchId,
-          clubparticipation: clubId
-        });
+          clubparticipation: organisationId
+        };
+
+        results.push(row);
+
+        if (!personResultCount[personId]) personResultCount[personId] = 0;
+        personResultCount[personId]++;
       }
     }
   }
 
-  console.log(`[parseResultsMultiDay] Antal resultatrader: ${results.length}`);
-  return { results, warnings };
+  console.log(`[parseResultsMultiDay] Totalt ${results.length} resultat hittades.`);
+  for (const [personId, count] of Object.entries(personResultCount)) {
+    console.log(`[parseResultsMultiDay] Person ${personId} hade ${count} resultat.`);
+  }
+
+  return { results, warnings: [] };
 }
 
-module.exports = parseResults;
+function toSeconds(value) {
+  if (typeof value === 'string' && value.includes(':')) {
+    const parts = value.split(':').map((v) => parseInt(v));
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    return null;
+  } else if (typeof value === 'number') {
+    return value;
+  } else {
+    return null;
+  }
+}
+
+module.exports = parseResultsMultiDay;
