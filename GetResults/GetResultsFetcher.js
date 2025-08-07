@@ -80,8 +80,21 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     console.log(`${logContext} Eventform är: ${eventform}`);
 
     if (eventform === 'IndMultiDay') {
-      parsed = parseResultsMultiDay(xml);
-    } else if (eventform === 'RelaySingleDay') {
+  const eventdateRes = await supabase
+    .from('events')
+    .select('eventdate')
+    .eq('eventid', eventId)
+    .single();
+
+  const eventdate = eventdateRes?.data?.eventdate || null;
+
+  const { results, warnings } = parseResultsMultiDay(xml, eventId, organisationId, batchid, eventdate);
+  parsed = results;
+
+  for (const warn of warnings) {
+    console.warn(`[parseResultsMultiDay][Warning] ${warn}`);
+  }
+} else if (eventform === 'RelaySingleDay') {
       parsed = parseResultsRelay(xml);
     } else {
       parsed = parseResultsStandard(xml);
@@ -210,3 +223,4 @@ async function fetchResultsForClub({ organisationId, batchid, apikey }) {
 }
 
 module.exports = { fetchResultsForEvent, fetchResultsForClub };
+
