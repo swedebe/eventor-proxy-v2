@@ -15,10 +15,16 @@ function parseResults(xml, eventId, clubId, batchId, eventdate) {
     : [xml.ClassResult];
 
   for (const classResult of classResults) {
-    if (!classResult?.EventClass) continue;
+    if (!classResult?.EventClass) {
+      console.log('[DEBUG] Hoppar över ClassResult utan EventClass');
+      continue;
+    }
+
     const eventClass = classResult.EventClass;
     const eventClassName = eventClass?.Name || null;
     const classTypeId = Number(eventClass?.ClassTypeId) || 0;
+
+    console.log('[DEBUG] Bearbetar klass:', eventClassName, 'classtypeid:', classTypeId);
 
     if (classTypeId === 0 && eventClassName) {
       warnings.push(`[parseResultsMultiDay][Warning] Okänd klass: "${eventClassName}" => classtypeid sätts till 0`);
@@ -33,6 +39,7 @@ function parseResults(xml, eventId, clubId, batchId, eventdate) {
     const classRaceInfo = Array.isArray(classResult.ClassRaceInfo)
       ? classResult.ClassRaceInfo[0]
       : classResult.ClassRaceInfo;
+
     const classresultnumberofstarts = classRaceInfo?.noOfStarts
       ? Number(classRaceInfo.noOfStarts)
       : null;
@@ -48,20 +55,32 @@ function parseResults(xml, eventId, clubId, batchId, eventdate) {
       const eventYear = parseInt(eventdate.split('-')[0]);
       const personage = birthYear ? eventYear - birthYear : null;
 
+      console.log('[DEBUG] PersonId:', personId, 'Age:', personage);
+
       const resultBlock = personResult.Result;
 
-      if (!resultBlock) continue;
+      if (!resultBlock) {
+        console.log('[DEBUG] Inga Result-block för person:', personId);
+        continue;
+      }
 
       const resultsArray = Array.isArray(resultBlock) ? resultBlock : [resultBlock];
 
       for (const r of resultsArray) {
         const status = r.CompetitorStatus?.value || null;
-        if (status !== 'OK') continue;
-
         const eventRaceId = Number(r.EventRaceId);
+        const resulttime = r.Time;
+
+        console.log('[DEBUG] Kontroll av resultat:', {
+          personId,
+          eventRaceId,
+          status,
+          resulttime
+        });
+
+        if (status !== 'OK') continue;
         if (!eventRaceId || !personId) continue;
 
-        const resulttime = parseTimeToSeconds(r.Time);
         const resulttimediff = parseTimeToSeconds(r.TimeDiff);
         const resultposition = r.Position ? Number(r.Position) : null;
 
@@ -74,7 +93,7 @@ function parseResults(xml, eventId, clubId, batchId, eventdate) {
           eventid: eventId,
           eventraceid: eventRaceId,
           eventclassname: eventClassName,
-          resulttime,
+          resulttime: parseTimeToSeconds(resulttime),
           resulttimediff,
           resultposition,
           resultcompetitorstatus: status,
@@ -95,4 +114,3 @@ function parseResults(xml, eventId, clubId, batchId, eventdate) {
 }
 
 module.exports = parseResults;
-
