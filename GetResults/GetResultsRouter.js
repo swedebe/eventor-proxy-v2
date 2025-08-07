@@ -78,14 +78,19 @@ router.get('/runGetResults', async (req, res) => {
     for (const eventId of uniqueEventIds) {
       console.log(`[GetResults] Kör resultatimport för eventid=${eventId}`);
 
-      await insertLogData(supabase, {
-        source: 'GetResultsRouter',
-        level: 'info',
-        organisationid: organisationId,
-        eventid,
-        batchid,
-        request: `Import av resultat för eventid=${eventId}`
-      });
+      try {
+  await insertLogData(supabase, {
+    source: 'GetResultsRouter',
+    level: 'info',
+    organisationid: organisationId,
+    eventid,
+    batchid,
+    request: `Import av resultat för eventid=${eventId}`
+  });
+} catch (err) {
+  console.error(`[GetResultsRouter] Fel vid loggning av eventid=${eventId}:`, err.message);
+}
+
 
       const result = await fetchResultsForEvent({
         organisationId,
@@ -127,3 +132,4 @@ router.get('/runGetResults', async (req, res) => {
 });
 
 module.exports = router;
+
