@@ -5,7 +5,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Logga att en resultatkörning startat: raderar gamla resultat + uppdaterar tableupdates
+// Logga att en resultatkörning startar: raderar gamla resultat + uppdaterar tableupdates
 async function logResultRunStart(batchid, organisationid, eventid) {
   try {
     const { error } = await supabase
@@ -37,6 +37,13 @@ async function logResultRunStart(batchid, organisationid, eventid) {
   }
 }
 
+// Logga ett meddelande till logdata-tabellen
+async function insertLogData(supabase, logObj) {
+  const { error } = await supabase.from('logdata').insert(logObj);
+  if (error) throw new Error(error.message);
+}
+
 module.exports = {
-  logResultRunStart
+  logResultRunStart,
+  insertLogData
 };
