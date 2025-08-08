@@ -25,6 +25,14 @@ function klassFaktorFromClassTypeId(classTypeId) {
 }
 
 /**
+ * Säkerställer att input är array (eller tom array).
+ */
+function toArray(value) {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+/**
  * parseResultsMultiDay
  * OBS: För flerdagarstävling ska classresultnumberofstarts INTE hämtas eller sparas.
  *
@@ -69,37 +77,28 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDateOver
     warnings.push('Kunde inte läsa eventår (varken override eller från <Event><StartDate><Date>). personage blir null.');
   }
 
-  const classResults = Array.isArray(parsed.ResultList.ClassResult)
-    ? parsed.ResultList.ClassResult
-    : parsed.ResultList.ClassResult
-    ? [parsed.ResultList.ClassResult]
-    : [];
-
+  const classResults = toArray(parsed.ResultList.ClassResult);
   console.log(`[parseResultsMultiDay] Antal klasser: ${classResults.length}`);
 
   for (const classResult of classResults) {
     const eventClassName = classResult?.EventClass?.Name ?? null;
-    const classTypeId = classResult?.EventClass?.ClassTypeId != null
+    const classTypeId = classResult?.EventClass?.ClassTypeId
       ? parseInt(classResult.EventClass.ClassTypeId, 10)
       : null;
-    const klassfaktor = klassFaktorFromClassTypeId(classTypeId);
+    const klassfaktor = klassFaktorFromClassTypeId(classTypeId) ?? null;
 
-    const personResults = Array.isArray(classResult.PersonResult)
-      ? classResult.PersonResult
-      : classResult.PersonResult
-      ? [classResult.PersonResult]
-      : [];
+    const personResults = toArray(classResult.PersonResult);
 
-    // Debug: visa första löparen i varje klass
+    // Debug-loggning av första löparen i varje klass
     if (personResults.length > 0) {
       const samplePr = personResults[0];
-      const sampleRr = Array.isArray(samplePr.RaceResult) ? samplePr.RaceResult[0] : samplePr.RaceResult;
-      const sampleRes = Array.isArray(sampleRr?.Result) ? sampleRr.Result[0] : sampleRr?.Result;
+      const sampleRr = toArray(samplePr.RaceResult)[0];
+      const sampleRes = toArray(sampleRr?.Result)[0];
       console.log(
         `[DEBUG Klass=${eventClassName}] Exempel: ` +
         `Time=${sampleRes?.Time}, TimeDiff=${sampleRes?.TimeDiff}, ` +
         `Pos=${sampleRes?.ResultPosition}, Status=${sampleRes?.CompetitorStatus?.['@_value']}`
-      );
+      ); // Felsökningslogg – ta ej bort utan manuell kontroll
     }
 
     for (const pr of personResults) {
@@ -112,38 +111,32 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDateOver
         ? parseInt(pr.Organisation.OrganisationId, 10)
         : null;
 
-      const raceResults = Array.isArray(pr.RaceResult)
-        ? pr.RaceResult
-        : pr.RaceResult
-        ? [pr.RaceResult]
-        : [];
+      const raceResults = toArray(pr.RaceResult);
 
       for (const rr of raceResults) {
         const eventRaceId = rr?.EventRaceId ? parseInt(rr.EventRaceId, 10) : null;
         if (!eventRaceId) continue;
 
-        const resultBlocks = Array.isArray(rr.Result) ? rr.Result : rr.Result ? [rr.Result] : [];
+        const resultBlocks = toArray(rr.Result);
         for (const r of resultBlocks) {
           const resulttime = toSeconds(r?.Time);
           const resulttimediff = toSeconds(r?.TimeDiff);
           const resultposition = r?.ResultPosition != null ? parseInt(r.ResultPosition, 10) : null;
           const resultcompetitorstatus = r?.CompetitorStatus?.['@_value'] ?? null;
 
-          // VIKTIGT: Ingen classresultnumberofstarts i multiday.
-          // Vi inkluderar inte nyckeln i objektet överhuvudtaget.
           const row = {
             personid: personId,
-            eventid: eventId != null ? parseInt(eventId, 10) : null,
+            eventid: parseInt(eventId, 10),
             eventraceid: eventRaceId,
             eventclassname: eventClassName,
             resulttime,
             resulttimediff,
             resultposition,
             resultcompetitorstatus,
-            // classresultnumberofstarts: (UTELÄMNAD MEDVETET)
+            // classresultnumberofstarts: (UTELÄMNAD MEDVETET FÖR MULTIDAY)
             classtypeid: classTypeId,
             klassfaktor,
-            points: null, // Poäng räknas inte här i MultiDay (kan läggas till senare om du vill)
+            points: null, // Poängberäkning görs ej i multiday
             personage,
             organisationid: organisationId,
             clubparticipation: clubId,
