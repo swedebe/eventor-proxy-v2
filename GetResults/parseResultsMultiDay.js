@@ -1,112 +1,173 @@
-const { XMLParser } = require("fast-xml-parser");
+// parseResultsMultiDay.js
+const { XMLParser } = require('fast-xml-parser');
 
-function parseResultsMultiDay(xmlString, eventId, organisationId, batchId, eventdate) {
+/**
+ * Konvertera "MM:SS" eller "H:MM:SS" till sekunder (int).
+ * Exempel: "1:02:46" -> 3766, "58:51" -> 3531
+ */
+function toSeconds(value) {
+  if (!value || typeof value !== 'string') return null;
+  const parts = value.split(':').map(v => parseInt(v, 10));
+  if (parts.some(Number.isNaN)) return null;
+  if (parts.length === 2) {
+    const [m, s] = parts;
+    return m * 60 + s;
+  }
+  if (parts.length === 3) {
+    const [h, m, s] = parts;
+    return h * 3600 + m * 60 + s;
+  }
+  return null;
+}
+
+/**
+ * Klassfaktor baserat på classtypeid.
+ * 16 -> 125, 17 -> 100, 19 -> 75, annars null
+ */
+function klassFaktorFromClassTypeId(classTypeId) {
+  if (classTypeId === 16) return 125;
+  if (classTypeId === 17) return 100;
+  if (classTypeId === 19) return 75;
+  return null;
+}
+
+/**
+ * Huvudparser för IndMultiDay resultat enligt 44022.xml.
+ * Observera att vi INTE litar på numberOfEntries/numberOfStarts i XML.
+ *
+ * @param {string} xmlString Rå XML från Eventor
+ * @param {number} eventId   EventId (ex. 44022) – skickas vidare till varje rad
+ * @param {number} clubId    OrganisationId för clubparticipation (sätts i Fetcher)
+ * @param {string} batchId   Batch-id (sätts i Fetcher)
+ * @param {string|null} eventdate Ej använd här; vi tar årtal från XML: <Event><StartDate><Date>
+ * @returns {{results: Array<object>, warnings: string[]}}
+ */
+function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventdate) {
   const parser = new XMLParser({
     ignoreAttributes: false,
-    attributeNamePrefix: '',
-    parseTagValue: true
+    attributeNamePrefix: '@_',
+    parseTagValue: true,
+    trimValues: true
   });
 
   const parsed = parser.parse(xmlString);
-
+  const warnings = [];
   const results = [];
-  const personResultCount = {};
 
-  const classResults = Array.isArray(parsed?.ResultList?.ClassResult)
+  if (!parsed?.ResultList) {
+    console.warn('[parseResultsMultiDay] ResultList saknas i XML');
+    return { results, warnings };
+  }
+
+  // Årtal för tävlingen tas från <Event><StartDate><Date> (t.ex. "2025-07-21")
+  const eventStartDateStr = parsed.ResultList?.Event?.StartDate?.Date || null;
+  const eventYear = eventStartDateStr && /^\d{4}/.test(eventStartDateStr)
+    ? parseInt(eventStartDateStr.slice(0, 4), 10)
+    : null;
+
+  if (!eventYear) {
+    warnings.push('Kunde inte läsa eventår från <Event><StartDate><Date>. personage blir null.');
+  }
+
+  // ClassResult kan vara array eller objekt
+  const classResults = Array.isArray(parsed.ResultList.ClassResult)
     ? parsed.ResultList.ClassResult
-    : [parsed?.ResultList?.ClassResult].filter(Boolean);
+    : parsed.ResultList.ClassResult
+    ? [parsed.ResultList.ClassResult]
+    : [];
 
   for (const classResult of classResults) {
-    const eventClass = classResult?.EventClass;
-    const eventClassName = eventClass?.Name || null;
-    const classTypeId = parseInt(eventClass?.ClassTypeId || '0');
+    const eventClass = classResult?.EventClass || {};
+    const eventClassName = eventClass?.Name ?? null;
+    const classTypeId = eventClass?.ClassTypeId != null ? parseInt(eventClass.ClassTypeId, 10) : null;
+    const klassfaktor = klassFaktorFromClassTypeId(classTypeId ?? 0);
 
-    const klassfaktor =
-      classTypeId === 16 ? 125 :
-      classTypeId === 17 ? 100 :
-      classTypeId === 19 ? 75 :
-      null;
+    // Vi använder inte ClassRaceInfo.noOfStarts från XML eftersom det är felaktigt enligt anvisningarna.
+    const classresultnumberofstarts = null;
 
+    // PersonResult kan vara array eller objekt
     const personResults = Array.isArray(classResult.PersonResult)
       ? classResult.PersonResult
-      : [classResult.PersonResult].filter(Boolean);
+      : classResult.PersonResult
+      ? [classResult.PersonResult]
+      : [];
 
-    for (const personResult of personResults) {
-      const personId = parseInt(personResult?.Person?.PersonId || '0');
-      if (!personId) continue;
+    for (const pr of personResults) {
+      const personId = pr?.Person?.PersonId != null ? parseInt(pr.Person.PersonId, 10) : null;
 
-      const organisation = personResult?.Organisation;
-      const organisationIdFromResult = parseInt(organisation?.OrganisationId || '0');
+      // Födelseår
+      const birthDateStr = pr?.Person?.BirthDate?.Date || null;
+      const birthYear = birthDateStr && /^\d{4}/.test(birthDateStr) ? parseInt(birthDateStr.slice(0, 4), 10) : null;
+      const personage = birthYear != null && eventYear != null ? eventYear - birthYear : null;
 
-      const raceResults = Array.isArray(personResult?.RaceResult)
-        ? personResult.RaceResult
-        : [personResult?.RaceResult].filter(Boolean);
+      // Organisation (klubb) från resultatposten
+      const organisationId = pr?.Organisation?.OrganisationId != null
+        ? parseInt(pr.Organisation.OrganisationId, 10)
+        : null;
 
-      for (const raceResult of raceResults) {
-        const result = raceResult?.Result;
-        if (!result || result?.CompetitorStatus?.value !== 'OK') continue;
+      // RaceResult kan vara array eller objekt
+      const raceResults = Array.isArray(pr.RaceResult)
+        ? pr.RaceResult
+        : pr.RaceResult
+        ? [pr.RaceResult]
+        : [];
 
-        const eventRaceId = parseInt(raceResult?.EventRaceId || '0');
-        const resulttime = toSeconds(result?.Time);
-        const resulttimediff = toSeconds(result?.TimeDiff);
-        const resultposition = parseInt(result?.ResultPosition || '0');
+      for (const rr of raceResults) {
+        const eventRaceId = rr?.EventRaceId != null ? parseInt(rr.EventRaceId, 10) : null;
+        const r = rr?.Result;
 
-        const numberOfStarts = null; // enligt instruktion, dessa värden kan ej användas
+        // Det ska finnas ett <Result>-block; om saknas hoppar vi över.
+        if (!r) continue;
 
-        const points = (klassfaktor && resultposition && numberOfStarts)
-          ? Math.round((klassfaktor * (1 - (resultposition / numberOfStarts))) * 100) / 100
-          : null;
+        // Plocka ut de fält du bad om
+        const timeStr = r?.Time ?? null;
+        const timeDiffStr = r?.TimeDiff ?? null;
+        const resultPosition = r?.ResultPosition != null ? parseInt(r.ResultPosition, 10) : null;
+        const competitorStatus = r?.CompetitorStatus?.['@_value'] ?? null;
 
-        const birthDate = personResult?.Person?.BirthDate?.Date;
-        const birthYear = birthDate ? parseInt(birthDate.split('-')[0]) : null;
-        const eventYear = eventdate ? parseInt(eventdate.split('-')[0]) : null;
-        const personage = (birthYear && eventYear) ? eventYear - birthYear : null;
+        // Konverteringar
+        const resulttime = toSeconds(timeStr);
+        const resulttimediff = toSeconds(timeDiffStr);
 
-        const row = {
+        // Poäng ska bara beräknas om vi har klassfaktor, position och antal startande.
+        // Eftersom antal startande i XML är opålitligt sätter vi null.
+        const points = null;
+
+        // Bygg resultatraden
+        results.push({
           personid: personId,
-          eventid: eventId,
+          eventid: eventId != null ? parseInt(eventId, 10) : null,
           eventraceid: eventRaceId,
-          eventclassname: eventClassName,
-          resulttime,
-          resulttimediff,
-          resultposition,
-          resultcompetitorstatus: result?.CompetitorStatus?.value || null,
-          classresultnumberofstarts: numberOfStarts,
+          eventclassname: eventClassName ?? null,
+          resulttime,                 // sekunder
+          resulttimediff,             // sekunder
+          resultposition: resultPosition,
+          resultcompetitorstatus: competitorStatus, // ex. "OK", "MisPunch", "DidNotStart"
+          classresultnumberofstarts,  // null enligt instruktion
           classtypeid: classTypeId,
-          klassfaktor,
-          points,
-          personage,
-          batchid: batchId,
-          clubparticipation: organisationId
-        };
-
-        results.push(row);
-
-        if (!personResultCount[personId]) personResultCount[personId] = 0;
-        personResultCount[personId]++;
+          klassfaktor,                // 125/100/75 eller null
+          points,                     // null (se kommentar)
+          personage,                  // helår: eventYear - birthYear
+          organisationid: organisationId // nyttigt för felsökning; kolumn finns i schema
+          // batchid och clubparticipation sätts i GetResultsFetcher innan insert
+        });
       }
     }
   }
 
-  console.log(`[parseResultsMultiDay] Totalt ${results.length} resultat hittades.`);
-  for (const [personId, count] of Object.entries(personResultCount)) {
-    console.log(`[parseResultsMultiDay] Person ${personId} hade ${count} resultat.`);
+  // Logg: total och per person
+  console.log(`[parseResultsMultiDay] Antal resultatrader som tolkats: ${results.length}`);
+
+  const perPerson = new Map();
+  for (const row of results) {
+    if (!row.personid) continue;
+    perPerson.set(row.personid, (perPerson.get(row.personid) || 0) + 1);
+  }
+  for (const [pid, cnt] of perPerson.entries()) {
+    console.log(`[parseResultsMultiDay] personid ${pid}: ${cnt} resultat`);
   }
 
-  return { results, warnings: [] };
-}
-
-function toSeconds(value) {
-  if (typeof value === 'string' && value.includes(':')) {
-    const parts = value.split(':').map((v) => parseInt(v));
-    if (parts.length === 2) return parts[0] * 60 + parts[1];
-    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-    return null;
-  } else if (typeof value === 'number') {
-    return value;
-  } else {
-    return null;
-  }
+  return { results, warnings };
 }
 
 module.exports = parseResultsMultiDay;
