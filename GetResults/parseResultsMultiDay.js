@@ -94,25 +94,29 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
     return { results, warnings };
   }
 
-  // Locate the ResultList.  A UTF–8 BOM or namespace decoration can
-  // sometimes change the exact key name of the root element.  If
-  // ResultList isn’t found directly, search for any key ending in
-  // "ResultList".
+  // Locate the ResultList.  A UTF–8 BOM, namespace prefixes or
+  // unusual casing can change the exact key name of the root
+  // element.  First try the simple property access.  If it fails,
+  // fall back to searching all keys for one that ends with or
+  // contains "resultlist" (case insensitive).  If still not
+  // found, emit a warning and log the available keys.
   let resultList = parsed?.ResultList;
   if (!resultList) {
     const keys = Object.keys(parsed || {});
+    // Search for keys that include "resultlist" regardless of case
     for (const key of keys) {
-      if (/ResultList$/.test(key)) {
+      if (/resultlist$/i.test(key) || /resultlist/i.test(key)) {
         resultList = parsed[key];
         break;
       }
     }
-  }
-
-  if (!resultList) {
-    console.warn('[parseResultsMultiDay] ResultList saknas i XML');
-    warnings.push('ResultList saknas i XML');
-    return { results, warnings };
+    if (!resultList) {
+      console.warn(
+        `[parseResultsMultiDay] Kunde inte hitta ResultList. Tillgängliga root-nycklar: ${keys.join(', ')}`
+      );
+      warnings.push('ResultList saknas i XML');
+      return { results, warnings };
+    }
   }
 
   // Determine the event year.  Prefer the provided eventDate, then
