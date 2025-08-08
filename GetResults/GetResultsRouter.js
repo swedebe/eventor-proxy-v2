@@ -88,7 +88,7 @@ router.get('/runGetResults', async (req, res) => {
     request: `Import av resultat för eventid=${eventId}`
   });
 } catch (err) {
-  console.error(`[GetResultsRouter] Fel vid loggning av eventid=${eventId}:`, err.message);
+  console.error(`[GetResultsRouter] Fel vid loggning av eventid=${eventid}:`, err.message);
 }
 
 
@@ -132,4 +132,5 @@ router.get('/runGetResults', async (req, res) => {
 });
 
 module.exports = router;
+
 
