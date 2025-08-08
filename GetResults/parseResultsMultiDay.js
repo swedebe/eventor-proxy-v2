@@ -257,8 +257,7 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
             klassfaktor,
             points: null,
             personage,
-            organisationid: competitorOrgId,
-            clubparticipation: clubId,
+            clubparticipation: competitorOrgId,
             batchid: batchId
           });
         }
