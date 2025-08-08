@@ -199,8 +199,31 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
 
     // Iterate over each competitor
     for (const pr of personResults) {
-      // Extract person identifier
-      const personId = pr?.Person?.PersonId ? parseInt(pr.Person.PersonId, 10) : null;
+      // Extract person identifier.  The XML parser may return the PersonId
+      // as a simple string/number or as an object (e.g. when attributes
+      // are present).  To robustly handle all cases we normalise the
+      // value into a number here.  If parsing fails the id is set to null.
+      let personId = null;
+      const personIdRaw = pr?.Person?.PersonId;
+      if (typeof personIdRaw === 'string' || typeof personIdRaw === 'number') {
+        const parsed = parseInt(personIdRaw, 10);
+        personId = Number.isNaN(parsed) ? null : parsed;
+      } else if (personIdRaw && typeof personIdRaw === 'object') {
+        // Some XML libraries wrap the element in an object with
+        // either a '#text' property or an '@_id' attribute.  Check
+        // both and parse whichever is present.
+        if (personIdRaw['#text'] != null) {
+          const parsed = parseInt(personIdRaw['#text'], 10);
+          if (!Number.isNaN(parsed)) {
+            personId = parsed;
+          }
+        } else if (personIdRaw['@_id'] != null) {
+          const parsed = parseInt(personIdRaw['@_id'], 10);
+          if (!Number.isNaN(parsed)) {
+            personId = parsed;
+          }
+        }
+      }
       // Extract birth year
       let birthYear = null;
       const birthDateStr = pr?.Person?.BirthDate?.Date;
