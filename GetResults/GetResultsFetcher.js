@@ -79,6 +79,11 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     });
 
     const xml = await response.text();
+      if (!response.ok) {
+        console.error(`[GetResults] Eventor-svar för eventId=${eventId} är INTE OK (status ${response.status})`);
+        console.error('[GetResults] Innehåll i svaret:', xml.slice(0, 500));
+    }
+
 
     // Försök läsa eventForm direkt ur XML först (t.ex. <Event eventForm="IndMultiDay">)
     let eventformFromXml = null;
@@ -231,3 +236,4 @@ async function fetchResultsForClub({ organisationId, batchid, apikey }) {
 }
 
 module.exports = { fetchResultsForEvent, fetchResultsForClub };
+
