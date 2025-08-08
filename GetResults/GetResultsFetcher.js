@@ -60,7 +60,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     }
 
     // Eventor-anrop
-    const baseUrl = `${process.env.SELF_BASE_URL}/proxy/results/organisation`;
+    const baseUrl = `${process.env.SELF_BASE_URL}/api/eventor/results`;
     console.log('[Proxy] API-nyckel mottagen:', apikey);
     console.log('[Proxy] Anropar Eventor med URL:', 'https://eventor.orientering.se/api/results/organisation');
     console.log('[Proxy] Parametrar:', {
@@ -236,4 +236,5 @@ async function fetchResultsForClub({ organisationId, batchid, apikey }) {
 }
 
 module.exports = { fetchResultsForEvent, fetchResultsForClub };
+
 
