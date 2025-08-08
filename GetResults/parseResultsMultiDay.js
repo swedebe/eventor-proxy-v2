@@ -1,6 +1,9 @@
 // parseResultsMultiDay.js
 const { XMLParser } = require('fast-xml-parser');
 
+/**
+ * Konverterar strängformat HH:MM[:SS] till sekunder.
+ */
 function toSeconds(value) {
   if (!value || typeof value !== 'string') return null;
   const parts = value.split(':').map(v => parseInt(v, 10));
@@ -10,6 +13,10 @@ function toSeconds(value) {
   return null;
 }
 
+/**
+ * Klassfaktor från ClassTypeId enligt tidigare logik:
+ * 16 = Elit → 125, 17 = Ålders-/öppna → 100, 19 = Färgnivå → 75
+ */
 function klassFaktorFromClassTypeId(classTypeId) {
   if (classTypeId === 16) return 125;
   if (classTypeId === 17) return 100;
@@ -17,7 +24,18 @@ function klassFaktorFromClassTypeId(classTypeId) {
   return null;
 }
 
-function parseResultsMultiDay(xmlString, eventId, clubId, batchId) {
+/**
+ * parseResultsMultiDay
+ * OBS: För flerdagarstävling ska classresultnumberofstarts INTE hämtas eller sparas.
+ *
+ * @param {string} xmlString - XML från Eventor
+ * @param {number|string} eventId - EventId
+ * @param {number|string} clubId - organisationId (klubben som importeras)
+ * @param {string} batchId - batchrun.id
+ * @param {string|null} eventDateOverride - (valfritt) ISO-YYYY-MM-DD från tabellen events; används för åldersberäkning om satt
+ * @returns {{results: Array<object>, warnings: Array<string>}}
+ */
+function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDateOverride = null) {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
@@ -34,11 +52,21 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId) {
     return { results, warnings };
   }
 
-  const eventYear = parsed.ResultList?.Event?.StartDate?.Date?.slice(0, 4) 
-    ? parseInt(parsed.ResultList.Event.StartDate.Date.slice(0, 4), 10)
-    : null;
+  // År för åldersberäkning: prioritera eventDateOverride (från events.eventdate), annars StartDate i XML
+  let eventYear = null;
+  if (eventDateOverride && typeof eventDateOverride === 'string' && eventDateOverride.length >= 4) {
+    const y = parseInt(eventDateOverride.slice(0, 4), 10);
+    if (!Number.isNaN(y)) eventYear = y;
+  }
   if (!eventYear) {
-    warnings.push('Kunde inte läsa eventår från <Event><StartDate><Date>. personage blir null.');
+    const xmlDate = parsed.ResultList?.Event?.StartDate?.Date;
+    if (xmlDate && typeof xmlDate === 'string' && xmlDate.length >= 4) {
+      const y = parseInt(xmlDate.slice(0, 4), 10);
+      if (!Number.isNaN(y)) eventYear = y;
+    }
+  }
+  if (!eventYear) {
+    warnings.push('Kunde inte läsa eventår (varken override eller från <Event><StartDate><Date>). personage blir null.');
   }
 
   const classResults = Array.isArray(parsed.ResultList.ClassResult)
@@ -67,7 +95,11 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId) {
       const samplePr = personResults[0];
       const sampleRr = Array.isArray(samplePr.RaceResult) ? samplePr.RaceResult[0] : samplePr.RaceResult;
       const sampleRes = Array.isArray(sampleRr?.Result) ? sampleRr.Result[0] : sampleRr?.Result;
-      console.log(`[DEBUG Klass=${eventClassName}] Exempel: Time=${sampleRes?.Time}, TimeDiff=${sampleRes?.TimeDiff}, Pos=${sampleRes?.ResultPosition}, Status=${sampleRes?.CompetitorStatus?.['@_value']}`);
+      console.log(
+        `[DEBUG Klass=${eventClassName}] Exempel: ` +
+        `Time=${sampleRes?.Time}, TimeDiff=${sampleRes?.TimeDiff}, ` +
+        `Pos=${sampleRes?.ResultPosition}, Status=${sampleRes?.CompetitorStatus?.['@_value']}`
+      );
     }
 
     for (const pr of personResults) {
@@ -97,7 +129,9 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId) {
           const resultposition = r?.ResultPosition != null ? parseInt(r.ResultPosition, 10) : null;
           const resultcompetitorstatus = r?.CompetitorStatus?.['@_value'] ?? null;
 
-          results.push({
+          // VIKTIGT: Ingen classresultnumberofstarts i multiday.
+          // Vi inkluderar inte nyckeln i objektet överhuvudtaget.
+          const row = {
             personid: personId,
             eventid: eventId != null ? parseInt(eventId, 10) : null,
             eventraceid: eventRaceId,
@@ -106,15 +140,17 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId) {
             resulttimediff,
             resultposition,
             resultcompetitorstatus,
-            classresultnumberofstarts: null,
+            // classresultnumberofstarts: (UTELÄMNAD MEDVETET)
             classtypeid: classTypeId,
             klassfaktor,
-            points: null,
+            points: null, // Poäng räknas inte här i MultiDay (kan läggas till senare om du vill)
             personage,
             organisationid: organisationId,
             clubparticipation: clubId,
             batchid: batchId
-          });
+          };
+
+          results.push(row);
         }
       }
     }
