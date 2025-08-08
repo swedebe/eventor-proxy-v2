@@ -67,8 +67,13 @@ app.get('/api/eventor/results', async (req, res) => {
     res.status(200).send(response.data);
   } catch (err) {
     console.error('[Proxy error]', err.message);
-    res.status(500).json({ error: 'Internal server error', message: err.message });
+    if (err.response) {
+      console.error('[Proxy error] Status:', err.response.status);
+      console.error('[Proxy error] Innehåll:', err.response.data?.slice?.(0, 500));
   }
+  res.status(500).json({ error: 'Internal server error', message: err.message });
+}
+
 });
 
 // Starta server
@@ -76,3 +81,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servern kör på port ${PORT}`);
 });
+
