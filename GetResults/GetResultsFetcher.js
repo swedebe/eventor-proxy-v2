@@ -73,9 +73,9 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       });
       return;
     }
-    const ended = new Date();
+    const completed = new Date();
 
-    // Logga API-anropet i logdata
+    // Logga API-anropet i logdata (använd 'completed', inte 'ended')
     try {
       await insertLogData(supabase, {
         source: 'Eventor',
@@ -83,7 +83,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         request: url,
         httpstatus: `${response?.status} ${response?.statusText}`,
         started: started.toISOString(),
-        ended: ended.toISOString(),
+        completed: completed.toISOString(),
         organisationid: organisationId,
         eventid: eventId,
         batchid
