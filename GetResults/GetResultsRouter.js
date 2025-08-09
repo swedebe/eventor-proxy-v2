@@ -31,6 +31,16 @@ router.get('/runGetResults', async (req, res) => {
     console.log(`[GetResultsRouter] Kör fetchResultsForClub för organisationid=${organisationId}`);
     console.log(`[GetResults] === START club ${organisationId} ===`);
 
+    // Count BEFORE
+    const { count: beforeCount, error: countBeforeErr } = await supabase
+      .from('results')
+      .select('*', { count: 'exact', head: true })
+      .eq('clubparticipation', organisationId);
+
+    if (countBeforeErr) {
+      console.error('[GetResults] Fel vid count (före):', countBeforeErr.message);
+    }
+
     const { data: batch, error: batchError } = await supabase
       .from('batchrun')
       .insert({
@@ -40,7 +50,8 @@ router.get('/runGetResults', async (req, res) => {
         initiatedby: 'manual',
         appversion: 'v1',
         renderjobid: process.env.RENDER_INSTANCE_ID || null,
-        starttime: new Date().toISOString()
+        starttime: new Date().toISOString(),
+        numberofrowsbefore: beforeCount || 0
       })
       .select()
       .single();
@@ -106,19 +117,21 @@ router.get('/runGetResults', async (req, res) => {
         apikey: club.apikey
       });
 
-      if (!result) {
-        antalFel++;
-      } else {
+      if (result && result.success !== false) {
         antalOk++;
+      } else {
+        antalFel++;
       }
+    }
 
-      await supabase
-        .from('tableupdates')
-        .upsert({
-          tablename: 'results',
-          lastupdated: new Date().toISOString(),
-          batchid
-        });
+    // Count AFTER
+    const { count: afterCount, error: countAfterErr } = await supabase
+      .from('results')
+      .select('*', { count: 'exact', head: true })
+      .eq('clubparticipation', organisationId);
+
+    if (countAfterErr) {
+      console.error('[GetResults] Fel vid count (efter):', countAfterErr.message);
     }
 
     await supabase
@@ -127,7 +140,8 @@ router.get('/runGetResults', async (req, res) => {
         status: 'success',
         endtime: new Date().toISOString(),
         numberofrequests: antalOk + antalFel,
-        numberoferrors: antalFel
+        numberoferrors: antalFel,
+        numberofrowsafter: afterCount || 0
       })
       .eq('id', batchid);
 
