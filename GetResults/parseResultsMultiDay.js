@@ -224,6 +224,29 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
           }
         }
       }
+      // Handle competitors without a valid personId.  Some XML documents contain
+      // <PersonId/> with no content which results in a null here.  The
+      // `results` table requires personid to be non-null, so we assign
+      // personId 0 and record a warning with enough information to identify
+      // the competitor manually.
+      if (personId == null) {
+        // Compose a short identifier for logging
+        const fam = pr?.Person?.PersonName?.Family ?? '<unknown>';
+        const givenField = pr?.Person?.PersonName?.Given;
+        let given;
+        if (typeof givenField === 'string') {
+          given = givenField;
+        } else if (Array.isArray(givenField)) {
+          given = givenField
+            .map((g) => (typeof g === 'string' ? g : g?.['#text'] || ''))
+            .join(' ');
+        } else {
+          given = '';
+        }
+        warnings.push(`PersonId saknas för ${fam} ${given} – har satt personid=0`);
+        personId = 0;
+      }
+
       // Extract birth year
       let birthYear = null;
       const birthDateStr = pr?.Person?.BirthDate?.Date;
