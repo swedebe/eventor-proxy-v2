@@ -84,6 +84,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         console.error('[GetResults] Innehåll i svaret:', xml.slice(0, 500));
     }
 
+
     // Försök läsa eventForm direkt ur XML först (t.ex. <Event eventForm="IndMultiDay">)
     let eventformFromXml = null;
     const mEventForm = xml.match(/<Event[^>]*\beventForm="([^"]+)"/i);
@@ -92,9 +93,11 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     }
 
     let parsed;
-    // Collect warnings from the parser.  All parsers now return an object
-    // with { results, warnings }.  Vi initialiserar warningsFromParse som
-    // en tom array och tilldelar den baserat på parserns utdata nedan.
+    // Collect warnings from the parser.  Both parseResultsStandard and
+    // parseResultsMultiDay return an object with { results, warnings }.
+    // Relay events currently return only an array of results and no
+    // warnings.  We initialise warningsFromParse as an empty array and
+    // assign it based on the parser output below.
     let warningsFromParse = [];
     try {
       // Hämta eventform: prioritera XML-attributet, annars hämta första icke-nulla raden i events
@@ -141,10 +144,9 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         // Extra guard: ta bort classresultnumberofstarts helt för multiday
         parsed = parsed.map(({ classresultnumberofstarts, ...rest }) => rest);
       } else if (eventform === 'RelaySingleDay') {
-        // RelaySingleDay parser returns an object { results, warnings }
-        const { results: relayResults, warnings: relayWarnings } = parseResultsRelay(xml);
-        parsed = relayResults;
-        warningsFromParse = relayWarnings || [];
+        // RelaySingleDay parser currently returns just an array of results.
+        parsed = parseResultsRelay(xml);
+        warningsFromParse = [];
       } else {
         // Standard single-day events: parse and destructure results and warnings.
         const { results: stdResults, warnings: stdWarnings } = parseResultsStandard(xml);
