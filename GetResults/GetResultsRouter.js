@@ -117,10 +117,14 @@ router.get('/runGetResults', async (req, res) => {
         apikey: club.apikey
       });
 
-      if (result && result.success !== false) {
-        antalOk++;
-      } else {
+      // Om fetchResultsForEvent returnerar ett objekt med success=false så
+      // räknas det som fel. Alla andra utfall (inklusive undefined) räknas som
+      // lyckade körningar. fetchResultsForEvent returnerar { success: true }
+      // när allt gått som planerat.
+      if (result && result.success === false) {
         antalFel++;
+      } else {
+        antalOk++;
       }
     }
 
