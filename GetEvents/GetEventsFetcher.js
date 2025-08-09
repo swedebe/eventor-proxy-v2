@@ -209,19 +209,6 @@ async function fetchAndStoreEvents(organisationId) {
     })
     .eq('id', batchId);
 
-  if (inserted.length > 0) {
-    await supabase
-      .from('tableupdates')
-      .upsert(
-        {
-          tablename: 'events',
-          lastupdated: new Date().toISOString(),
-          updatedbybatchid: batchId,
-        },
-        { onConflict: 'tablename' }
-      );
-  }
-
   console.log(`[GetEvents] Inserted ${inserted.length} events to Supabase`);
   return { insertedCount: inserted.length };
 }
