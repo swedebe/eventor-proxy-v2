@@ -1,6 +1,3 @@
-**Please replace the contents of `GetResults/GetResultsRouter.js` with the following code:**
-
-```javascript
 const express = require('express');
 const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
