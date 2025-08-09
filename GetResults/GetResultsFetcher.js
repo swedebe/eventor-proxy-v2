@@ -1,7 +1,6 @@
 // GetResultsFetcher.js
-// Kompakt men komplett fetcher som väljer rätt parser (Standard/MultiDay/Relay),
-// loggar ordentligt, rensar gamla rader, skriver nya rader, och lägger
-// in varningar – inklusive särskild varning om clubparticipation skrivs över.
+// Väljer parser (Standard/MultiDay/Relay), loggar, rensar gamla rader,
+// skriver nya rader, och lägger varningar – inkl. varning om clubparticipation-överskrivning.
 
 const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
@@ -19,7 +18,7 @@ console.log('[DEBUG] SUPABASE_SERVICE_ROLE_KEY börjar med:', SUPABASE_SERVICE_R
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 /**
- * Robust, enkel heuristik för att välja parser direkt ur XML.
+ * Enkel heuristik för parser-val direkt ur XML.
  * - Relay: om <TeamResult> finns
  * - MultiDay: om eventForm="IndMultiDay" eller texten "IndMultiDay" i Event-delen
  * - Standard: annars
@@ -58,10 +57,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     let response, xml;
     try {
       response = await fetch(url, {
-        headers: {
-          Accept: 'application/xml',
-          ApiKey: apikey
-        },
+        headers: { Accept: 'application/xml', ApiKey: apikey },
         timeout: 60000
       });
       xml = await response.text();
@@ -110,7 +106,6 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     let warningsFromParse = [];
     try {
       if (parserKind === 'relay') {
-        // Våra relay-parser returnerar { results, warnings }
         const out = parseResultsRelay(xml);
         if (Array.isArray(out)) {
           parsed = out;
@@ -146,8 +141,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     }
     console.log(`${logContext} ${parsed.length} resultat tolkades från XML`);
 
-    // 4) Förbered rader: rensa gamla, sätt batchid/club/event, och bygg varningar vid clubparticipation‑överskrivning
-    // Rensa tidigare rader för aktuell klubb+event
+    // 4) Rensa gamla rader för aktuell klubb+event
     try {
       const { error: delErr } = await supabase
         .from('results')
@@ -164,7 +158,6 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
           eventid: eventId,
           batchid
         });
-        // Fortsätt ändå – nyimport kan lyckas även om gamla inte fanns
       } else {
         console.log(`${logContext} Tidigare rader (club=${organisationId}, event=${eventId}) rensade`);
       }
@@ -172,7 +165,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       console.error(`${logContext} Ovänterat fel vid delete:`, e);
     }
 
-    // Sätt batchid & eventid, och varna om clubparticipation överskrivs
+    // 5) Sätt batchid & eventid, och varna om clubparticipation överskrivs
     for (const row of parsed) {
       const originalClubParticipation = row.clubparticipation ?? null;
 
@@ -184,24 +177,20 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         originalClubParticipation != null &&
         originalClubParticipation !== organisationId
       ) {
-        // Bygg informativt varningsmeddelande (person, team, leg när det finns)
         const parts = [];
         parts.push(`clubparticipation ändrades ${originalClubParticipation} → ${organisationId}`);
         if (row.personid != null) parts.push(`personid=${row.personid}`);
         if (row.eventraceid != null) parts.push(`eventraceid=${row.eventraceid}`);
         if (row.relayteamname) parts.push(`team="${row.relayteamname}"`);
         if (row.relayleg != null) parts.push(`leg=${row.relayleg}`);
-
         warningsFromParse.push(parts.join(' | '));
       }
     }
 
-    // 5) Skriv varningar (parserns + våra nya)
+    // 6) Skriv varningar (parserns + våra nya)
     try {
       if (warningsFromParse.length > 0) {
-        for (const w of warningsFromParse) {
-          console.warn(`[parseResults][Warning] ${w}`);
-        }
+        for (const w of warningsFromParse) console.warn(`[parseResults][Warning] ${w}`);
         const warningRows = warningsFromParse.map((msg) => ({
           organisationid: organisationId,
           eventid: eventId,
@@ -229,7 +218,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       console.error(`${logContext} Ovänterat fel vid hantering av warnings:`, wErr);
     }
 
-    // 6) Skriv resultat – chunkad insert
+    // 7) Skriv resultat – chunkad insert
     const chunks = chunkArray(parsed, 1000);
     let totalInserted = 0;
     for (const [idx, chunk] of chunks.entries()) {
@@ -244,21 +233,20 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
           eventid: eventId,
           batchid
         });
-        // Fortsätt med nästa chunk
       } else {
         totalInserted += data?.length ?? chunk.length;
       }
     }
 
     console.log(`${logContext} Klart. Insatta rader: ${totalInserted}`);
+    // 8) Info-rad i logdata (utan numberofrowsafter)
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'info',
-      comment: `Resultat importerade`,
+      comment: `Resultat importerade (${totalInserted} rader)`,
       organisationid: organisationId,
       eventid: eventId,
-      batchid,
-      numberofrowsafter: totalInserted
+      batchid
     });
   } catch (e) {
     console.error(`${logContext} Ovänterat fel:`, e);
@@ -280,7 +268,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
 async function fetchResultsForClub({ organisationId, batchid, apikey }) {
   console.log(`[GetResults] === START club ${organisationId} ===`);
 
-  // Hämta unika eventid (enligt dina regler kör vi en gång per eventid)
+  // Hämta unika eventid (vi kör en gång per eventid)
   const { data: events, error: eventError } = await supabase
     .from('events')
     .select('eventid')
@@ -320,4 +308,3 @@ async function fetchResultsForClub({ organisationId, batchid, apikey }) {
 }
 
 module.exports = { fetchResultsForEvent, fetchResultsForClub };
-
