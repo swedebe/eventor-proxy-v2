@@ -118,9 +118,7 @@ router.get('/runGetResults', async (req, res) => {
       });
 
       // Om fetchResultsForEvent returnerar ett objekt med success=false så
-      // räknas det som fel. Alla andra utfall (inklusive undefined) räknas som
-      // lyckade körningar. fetchResultsForEvent returnerar { success: true }
-      // när allt gått som planerat.
+      // räknas det som fel. Alla andra utfall räknas som lyckade körningar.
       if (result && result.success === false) {
         antalFel++;
       } else {
@@ -149,31 +147,6 @@ router.get('/runGetResults', async (req, res) => {
         numberofrowsafter: afterCount || 0
       })
       .eq('id', batchid);
-
-    /*
-     * När resultat har importerats vill vi även uppdatera raden i tabellen
-     * `tableupdates` för tabellen `results`. Detta motsvarar beteendet i
-     * GetEvents-flödet där `tableupdates` uppdateras efter att nya events
-     * sparats. Vi använder upsert så att raden skapas om den saknas eller
-     * uppdateras om den redan finns. Genom att lägga denna logik här
-     * säkerställer vi att tabellen alltid får en uppdaterad tidsstämpel när
-     * en batchkörning för resultat har slutförts, oavsett hur många rader
-     * som faktiskt lagts till.
-     */
-    try {
-      await supabase
-        .from('tableupdates')
-        .upsert(
-          {
-            tablename: 'results',
-            lastupdated: new Date().toISOString(),
-            updatedbybatchid: batchid
-          },
-          { onConflict: 'tablename' }
-        );
-    } catch (e) {
-      console.warn(`[GetResults] Kunde inte uppdatera tableupdates: ${e.message}`);
-    }
 
     console.log(`[GetResults] === SLUT club ${organisationId} ===`);
   }
