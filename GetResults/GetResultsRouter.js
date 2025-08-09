@@ -1,3 +1,6 @@
+**Please replace the contents of `GetResults/GetResultsRouter.js` with the following code:**
+
+```javascript
 const express = require('express');
 const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
@@ -134,6 +137,7 @@ router.get('/runGetResults', async (req, res) => {
       console.error('[GetResults] Fel vid count (efter):', countAfterErr.message);
     }
 
+    // Update batchrun with final status and metrics for this club
     await supabase
       .from('batchrun')
       .update({
@@ -144,6 +148,31 @@ router.get('/runGetResults', async (req, res) => {
         numberofrowsafter: afterCount || 0
       })
       .eq('id', batchid);
+
+    /*
+     * När resultat har importerats vill vi även uppdatera raden i tabellen
+     * `tableupdates` för tabellen `results`. Detta motsvarar beteendet i
+     * GetEvents-flödet där `tableupdates` uppdateras efter att nya events
+     * sparats. Vi använder upsert så att raden skapas om den saknas eller
+     * uppdateras om den redan finns. Genom att lägga denna logik här
+     * säkerställer vi att tabellen alltid får en uppdaterad tidsstämpel när
+     * en batchkörning för resultat har slutförts, oavsett hur många rader
+     * som faktiskt lagts till.
+     */
+    try {
+      await supabase
+        .from('tableupdates')
+        .upsert(
+          {
+            tablename: 'results',
+            lastupdated: new Date().toISOString(),
+            updatedbybatchid: batchid
+          },
+          { onConflict: 'tablename' }
+        );
+    } catch (e) {
+      console.warn(`[GetResults] Kunde inte uppdatera tableupdates: ${e.message}`);
+    }
 
     console.log(`[GetResults] === SLUT club ${organisationId} ===`);
   }
