@@ -71,7 +71,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         eventid: eventId,
         batchid
       });
-      return;
+      return { success: false };
     }
     const completed = new Date();
 
@@ -93,7 +93,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
 
     if (!response?.ok) {
       console.error(`${logContext} Eventor-svar ej OK (${response?.status}). Förhandsinnehåll:`, xml?.slice(0, 500) || '<tomt>');
-      return;
+      return { success: false };
     }
 
     // 2) Välj parser
@@ -131,12 +131,13 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         eventid: eventId,
         batchid
       });
-      return;
+      return { success: false };
     }
 
     if (!parsed || parsed.length === 0) {
       console.log(`${logContext} 0 resultat tolkades från XML`);
-      return;
+      // Ingen data men detta är inte ett fel – returnera success med 0 rader
+      return { success: true, insertedRows: 0 };
     }
     console.log(`${logContext} ${parsed.length} resultat tolkades från XML`);
 
@@ -180,7 +181,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         parts.push(`clubparticipation ändrades ${originalClubParticipation} → ${organisationId}`);
         if (row.personid != null) parts.push(`personid=${row.personid}`);
         if (row.eventraceid != null) parts.push(`eventraceid=${row.eventraceid}`);
-        if (row.relayteamname) parts.push(`team="${row.relayteamname}"`);
+        if (row.relayteamname) parts.push(`team=\"${row.relayteamname}\"`);
         if (row.relayleg != null) parts.push(`leg=${row.relayleg}`);
         warningsFromParse.push(parts.join(' | '));
       }
@@ -247,6 +248,32 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       eventid: eventId,
       batchid
     });
+
+    /*
+     * Uppdatera tableupdates för tabellen \"results\". Detta motsvarar
+     * beteendet i GetEvents-flödet där tabellen uppdateras när nya events
+     * sparas. Upsert säkerställer att raden skapas om den saknas och
+     * uppdateras om den redan finns. Vi använder batchid för spårning.
+     */
+    try {
+      await supabase
+        .from('tableupdates')
+        .upsert(
+          {
+            tablename: 'results',
+            lastupdated: new Date().toISOString(),
+            updatedbybatchid: batchid
+          },
+          { onConflict: 'tablename' }
+        );
+    } catch (e) {
+      console.warn(`[GetResultsFetcher] Kunde inte uppdatera tableupdates: ${e.message}`);
+    }
+
+    // returnera en succésignal så att anropande kod kan skilja på lyckade och
+    // misslyckade körningar. Om vi inte returnerar något betraktas undefined
+    // som success i GetResultsRouter.
+    return { success: true, insertedRows: totalInserted };
   } catch (e) {
     console.error(`${logContext} Ovänterat fel:`, e);
     await insertLogData(supabase, {
@@ -257,6 +284,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       eventid: eventId,
       batchid
     });
+    return { success: false };
   }
 }
 
@@ -283,13 +311,13 @@ async function fetchResultsForClub({ organisationId, batchid, apikey }) {
       batchid
     });
     console.log(`[GetResults] === SLUT club ${organisationId} (fel) ===`);
-    return;
+    return { success: false };
   }
 
   if (!events || events.length === 0) {
     console.log('[GetResults] Inga events hittades att köra');
     console.log(`[GetResults] === SLUT club ${organisationId} ===`);
-    return;
+    return { success: true };
   }
 
   console.log(`[GetResults] ${events.length} eventid hittades i tabellen events`);
@@ -304,6 +332,7 @@ async function fetchResultsForClub({ organisationId, batchid, apikey }) {
   }
 
   console.log(`[GetResults] === SLUT club ${organisationId} ===`);
+  return { success: true };
 }
 
 module.exports = { fetchResultsForEvent, fetchResultsForClub };
