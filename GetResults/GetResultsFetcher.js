@@ -14,7 +14,7 @@ const supabase = createClient(
 );
 
 async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }) {
-  const logContext = `[GetResults] Organisation ${organisationId} – Event ${eventId}`;
+  const logContext = [GetResults] Organisation ${organisationId} – Event ${eventId};
 
   try {
     // Kontrollera om det finns tidigare rader för denna klubb+event
@@ -25,11 +25,11 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       .eq('eventid', eventId);
 
     if (selectError) {
-      console.error(`${logContext} Fel vid läsning av tidigare rader:`, selectError.message);
+      console.error(${logContext} Fel vid läsning av tidigare rader:, selectError.message);
       await insertLogData(supabase, {
         source: 'GetResultsFetcher',
         level: 'error',
-        errormessage: `Fel vid läsning av tidigare rader: ${selectError.message}`,
+        errormessage: Fel vid läsning av tidigare rader: ${selectError.message},
         organisationid: organisationId,
         eventid: eventId,
         batchid
@@ -39,18 +39,18 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
 
     const numberOfRowsBefore = existingRows.length;
     if (numberOfRowsBefore > 0) {
-      console.log(`${logContext} ${numberOfRowsBefore} rader tas bort innan nyimport.`);
+      console.log(${logContext} ${numberOfRowsBefore} rader tas bort innan nyimport.);
       const { error: deleteError } = await supabase
         .from('results')
         .delete()
         .eq('clubparticipation', organisationId)
         .eq('eventid', eventId);
       if (deleteError) {
-        console.error(`${logContext} Fel vid delete av tidigare rader:`, deleteError.message);
+        console.error(${logContext} Fel vid delete av tidigare rader:, deleteError.message);
         await insertLogData(supabase, {
           source: 'GetResultsFetcher',
           level: 'error',
-          errormessage: `Fel vid delete av tidigare rader: ${deleteError.message}`,
+          errormessage: Fel vid delete av tidigare rader: ${deleteError.message},
           organisationid: organisationId,
           eventid: eventId,
           batchid
@@ -60,7 +60,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     }
 
     // Eventor-anrop
-    const baseUrl = `${process.env.SELF_BASE_URL}/api/eventor/results`;
+    const baseUrl = ${process.env.SELF_BASE_URL}/api/eventor/results;
     console.log('[Proxy] API-nyckel mottagen:', apikey);
     console.log('[Proxy] Anropar Eventor med URL:', 'https://eventor.orientering.se/api/results/organisation');
     console.log('[Proxy] Parametrar:', {
@@ -72,7 +72,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       includeAdditionalResultValues: false
     });
 
-    const response = await fetch(`${baseUrl}?eventId=${eventId}&organisationId=${organisationId}`, {
+    const response = await fetch(${baseUrl}?eventId=${eventId}&organisationId=${organisationId}, {
       headers: {
         'x-api-key': apikey
       }
@@ -80,10 +80,9 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
 
     const xml = await response.text();
       if (!response.ok) {
-        console.error(`[GetResults] Eventor-svar för eventId=${eventId} är INTE OK (status ${response.status})`);
+        console.error([GetResults] Eventor-svar för eventId=${eventId} är INTE OK (status ${response.status}));
         console.error('[GetResults] Innehåll i svaret:', xml.slice(0, 500));
     }
-
 
     // Försök läsa eventForm direkt ur XML först (t.ex. <Event eventForm="IndMultiDay">)
     let eventformFromXml = null;
@@ -93,11 +92,9 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     }
 
     let parsed;
-    // Collect warnings from the parser.  Both parseResultsStandard and
-    // parseResultsMultiDay return an object with { results, warnings }.
-    // Relay events currently return only an array of results and no
-    // warnings.  We initialise warningsFromParse as an empty array and
-    // assign it based on the parser output below.
+    // Collect warnings from the parser.  All parsers now return an object
+    // with { results, warnings }.  We initialiserar warningsFromParse som
+    // en tom array och tilldelar den baserat på parserns utdata nedan.
     let warningsFromParse = [];
     try {
       // Hämta eventform: prioritera XML-attributet, annars hämta första icke-nulla raden i events
@@ -113,7 +110,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
           eventform = eventformRes.data[0].eventform || '';
         }
       }
-      console.log(`${logContext} Eventform är: ${eventform}`);
+      console.log(${logContext} Eventform är: ${eventform});
 
       if (eventform === 'IndMultiDay') {
         // Åldersberäkning: försök först hämta eventdate från DB (valfri rad), annars från XML StartDate
@@ -144,9 +141,10 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         // Extra guard: ta bort classresultnumberofstarts helt för multiday
         parsed = parsed.map(({ classresultnumberofstarts, ...rest }) => rest);
       } else if (eventform === 'RelaySingleDay') {
-        // RelaySingleDay parser currently returns just an array of results.
-        parsed = parseResultsRelay(xml);
-        warningsFromParse = [];
+        // RelaySingleDay parser returns an object { results, warnings }
+        const { results: relayResults, warnings: relayWarnings } = parseResultsRelay(xml);
+        parsed = relayResults;
+        warningsFromParse = relayWarnings || [];
       } else {
         // Standard single-day events: parse and destructure results and warnings.
         const { results: stdResults, warnings: stdWarnings } = parseResultsStandard(xml);
@@ -154,11 +152,11 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         warningsFromParse = stdWarnings || [];
       }
     } catch (parseError) {
-      console.error(`${logContext} Fel vid parsning av resultat:`, parseError);
+      console.error(${logContext} Fel vid parsning av resultat:, parseError);
       await insertLogData(supabase, {
         source: 'GetResultsFetcher',
         level: 'error',
-        errormessage: `Fel vid parsning av resultat: ${parseError.message}`,
+        errormessage: Fel vid parsning av resultat: ${parseError.message},
         organisationid: organisationId,
         eventid: eventId,
         batchid
@@ -167,10 +165,10 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     }
 
     if (!parsed || parsed.length === 0) {
-      console.log(`${logContext} 0 resultat hittades i Eventor`);
+      console.log(${logContext} 0 resultat hittades i Eventor);
       return;
     } else {
-      console.log(`${logContext} ${parsed.length} resultat tolkades från XML`);
+      console.log(${logContext} ${parsed.length} resultat tolkades från XML);
     }
 
     // Sätt batchid och klubb på varje rad (om inte redan satt)
@@ -190,7 +188,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     try {
       if (warningsFromParse && warningsFromParse.length > 0) {
         for (const warn of warningsFromParse) {
-          console.warn(`[parseResults][Warning] ${warn}`);
+          console.warn([parseResults][Warning] ${warn});
         }
         const warningRows = warningsFromParse.map((msg) => ({
           organisationid: organisationId,
@@ -204,11 +202,11 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
           .from('warnings')
           .insert(warningRows);
         if (warningsInsertError) {
-          console.error(`${logContext} Fel vid insert av warnings:`, warningsInsertError.message);
+          console.error(${logContext} Fel vid insert av warnings:, warningsInsertError.message);
           await insertLogData(supabase, {
             source: 'GetResultsFetcher',
             level: 'error',
-            errormessage: `Fel vid insert av warnings: ${warningsInsertError.message}`,
+            errormessage: Fel vid insert av warnings: ${warningsInsertError.message},
             organisationid: organisationId,
             eventid: eventId,
             batchid
@@ -216,11 +214,11 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         }
       }
     } catch (warningInsertException) {
-      console.error(`${logContext} Undantag vid insert av warnings:`, warningInsertException);
+      console.error(${logContext} Undantag vid insert av warnings:, warningInsertException);
       await insertLogData(supabase, {
         source: 'GetResultsFetcher',
         level: 'error',
-        errormessage: `Undantag vid insert av warnings: ${warningInsertException.message}`,
+        errormessage: Undantag vid insert av warnings: ${warningInsertException.message},
         organisationid: organisationId,
         eventid: eventId,
         batchid
@@ -232,11 +230,11 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       .insert(parsed);
 
     if (insertError) {
-      console.error(`${logContext} Fel vid insert:`, insertError.message);
+      console.error(${logContext} Fel vid insert:, insertError.message);
       await insertLogData(supabase, {
         source: 'GetResultsFetcher',
         level: 'error',
-        errormessage: `Fel vid insert: ${insertError.message}`,
+        errormessage: Fel vid insert: ${insertError.message},
         organisationid: organisationId,
         eventid: eventId,
         batchid
@@ -244,13 +242,13 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       return;
     }
 
-    console.log(`${logContext} Insertstatus: ${status}`);
+    console.log(${logContext} Insertstatus: ${status});
   } catch (e) {
-    console.error(`${logContext} Ovänterat fel:`, e);
+    console.error(${logContext} Ovänterat fel:, e);
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
-      errormessage: `Ovänterat fel: ${e.message}`,
+      errormessage: Ovänterat fel: ${e.message},
       organisationid: organisationId,
       eventid: eventId,
       batchid
@@ -259,7 +257,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
 }
 
 async function fetchResultsForClub({ organisationId, batchid, apikey }) {
-  console.log(`[GetResults] === START club ${organisationId} ===`);
+  console.log([GetResults] === START club ${organisationId} ===);
 
   // Hämta eventId:n från events (senaste batchen eller allt du vill köra)
   const { data: events, error: eventsErr } = await supabase
@@ -272,7 +270,7 @@ async function fetchResultsForClub({ organisationId, batchid, apikey }) {
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
-      errormessage: `Fel vid hämtning av events: ${eventsErr.message}`,
+      errormessage: Fel vid hämtning av events: ${eventsErr.message},
       organisationid: organisationId,
       batchid
     });
@@ -280,21 +278,4 @@ async function fetchResultsForClub({ organisationId, batchid, apikey }) {
   }
 
   if (!events || events.length === 0) {
-    console.log('[GetResults] 0 eventid hittades i tabellen events');
-    return;
-  }
-
-  console.log(`[GetResults] ${events.length} eventid hittades i tabellen events`);
-  for (const event of events) {
-    await fetchResultsForEvent({
-      organisationId,
-      eventId: event.eventid,
-      batchid,
-      apikey
-    });
-  }
-
-  console.log(`[GetResults] === SLUT club ${organisationId} ===`);
-}
-
-module.exports = { fetchResultsForEvent, fetchResultsForClub };
+    console.log('[GetResults] 0 eventid
