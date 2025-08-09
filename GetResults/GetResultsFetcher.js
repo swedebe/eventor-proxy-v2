@@ -254,7 +254,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'info',
-      message: `Resultat importerade`,
+      comment: `Resultat importerade`,
       organisationid: organisationId,
       eventid: eventId,
       batchid,
@@ -320,3 +320,4 @@ async function fetchResultsForClub({ organisationId, batchid, apikey }) {
 }
 
 module.exports = { fetchResultsForEvent, fetchResultsForClub };
+
