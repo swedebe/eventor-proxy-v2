@@ -114,7 +114,8 @@ function getPersonName(person) {
       .map((g) => (typeof g === 'string' ? g : g?.['#text'] || ''))
       .join(' ');
   }
-  return ${fam} ${given}.trim();
+  // Use template string to combine family and given names safely
+  return `${fam} ${given}`.trim();
 }
 
 /**
@@ -142,7 +143,7 @@ function parseResultsRelay(xmlString) {
   try {
     parsed = parser.parse(xmlString);
   } catch (err) {
-    warnings.push(XML parse error: ${err.message});
+    warnings.push(`XML parse error: ${err.message}`);
     return { results, warnings };
   }
 
@@ -181,7 +182,7 @@ function parseResultsRelay(xmlString) {
       : [resultList.ClassResult];
   }
   // Log debug information about number of classes
-  console.log([parseResultsRelay] Antal klasser: ${classResults.length});
+  console.log(`[parseResultsRelay] Antal klasser: ${classResults.length}`);
 
   for (const classResult of classResults) {
     // Extract class name and class type id
@@ -239,7 +240,7 @@ function parseResultsRelay(xmlString) {
         const samplePos = sm?.OverallResult?.ResultPosition;
         const sampleStatus = sm?.CompetitorStatus?.['@_value'] ?? sm?.CompetitorStatus?.value;
         console.log(
-          [DEBUG Klass=${eventClassName}] Exempel: Time=${sampleTime}, TimeDiff=${sampleTimeDiff}, Pos=${samplePos}, Status=${sampleStatus}
+          `[DEBUG Klass=${eventClassName}] Exempel: Time=${sampleTime}, TimeDiff=${sampleTimeDiff}, Pos=${samplePos}, Status=${sampleStatus}`
         );
       }
     }
@@ -267,7 +268,7 @@ function parseResultsRelay(xmlString) {
         let personId = parsePersonId(tmr.Person.PersonId);
         if (personId == null) {
           const pname = getPersonName(tmr.Person);
-          warnings.push(PersonId saknas för ${pname} – har satt personid=0);
+          warnings.push(`PersonId saknas för ${pname} – har satt personid=0`);
           personId = 0;
         }
 
@@ -360,7 +361,7 @@ function parseResultsRelay(xmlString) {
     }
   }
 
-  console.log([parseResultsRelay] Totalt antal resultat: ${results.length});
+  console.log(`[parseResultsRelay] Totalt antal resultat: ${results.length}`);
   return { results, warnings };
 }
 
