@@ -1,5 +1,6 @@
 // GetEvents/GetEventsLogger.js
-// Centraliserad loggning för GetEvents – enhetligt med GetResults, sätter alltid timestamp/start/completed/status.
+// Centraliserad loggning för GetEvents.
+// Viktigt: tabellen logdata saknar kolumn "response" – vi använder "comment" istället.
 
 const { createClient } = require("@supabase/supabase-js");
 
@@ -20,12 +21,12 @@ async function insertLogData(payload) {
     eventid: payload.eventid ?? null,
     batchid: payload.batchid ?? null,
     request: payload.request ?? null,
-    response: payload.response ?? null,
     errormessage: payload.errormessage ?? null,
-    comment: payload.comment ?? null,
+    comment: payload.comment ?? null,           // använd comment istället för response
     responsecode: payload.responsecode ?? null,
     timestamp: nowIso(),
     started: payload.started ?? nowIso(),
+    completed: payload.completed ?? null,
   };
 
   const { data, error } = await supabase.from("logdata").insert(row).select().single();
@@ -44,9 +45,9 @@ async function logApiStart(requestUrl, batchid, meta = {}) {
     organisationid: meta.organisationid ?? null,
     eventid: meta.eventid ?? null,
     request: requestUrl,
+    comment: meta.comment ?? null,             // skriv ev. notis i comment
     timestamp: nowIso(),
     started: nowIso(),
-    comment: meta.comment ?? null,
   };
 
   const { data, error } = await supabase.from("logdata").insert(row).select().single();
@@ -57,17 +58,16 @@ async function logApiStart(requestUrl, batchid, meta = {}) {
   return data.id;
 }
 
-async function logApiEnd(id, statusCode = 200, responseSnippet = null) {
+async function logApiEnd(id, statusCode = 200, note = null) {
   if (!id) return;
-  const { error } = await supabase
-    .from("logdata")
-    .update({
-      completed: nowIso(),
-      responsecode: statusCode,
-      response: responseSnippet,
-      timestamp: nowIso(),
-    })
-    .eq("id", id);
+  const patch = {
+    completed: nowIso(),
+    responsecode: statusCode,
+    timestamp: nowIso(),
+  };
+  if (note != null) patch.comment = String(note).slice(0, 2000);
+
+  const { error } = await supabase.from("logdata").update(patch).eq("id", id);
   if (error) {
     console.error("[GetEventsLogger] logApiEnd error:", error.message, { id, statusCode });
   }
@@ -84,23 +84,21 @@ async function logApiError(idOrError, statusCodeOrMsg, message, requestUrl) {
     statusCode = typeof statusCodeOrMsg === "number" ? statusCodeOrMsg : -1;
     if (!errMsg && typeof statusCodeOrMsg === "string") errMsg = statusCodeOrMsg;
   } else {
-    // idOrError är ett Error-objekt
     const err = idOrError;
     statusCode = err?.response?.status ?? -1;
     if (!errMsg) errMsg = err?.message ?? "error";
   }
 
   if (id) {
-    const { error } = await supabase
-      .from("logdata")
-      .update({
-        completed: now,
-        responsecode: statusCode,
-        errormessage: errMsg,
-        timestamp: now,
-        request: requestUrl ?? null,
-      })
-      .eq("id", id);
+    const patch = {
+      completed: now,
+      responsecode: statusCode,
+      errormessage: errMsg,
+      timestamp: now,
+    };
+    if (requestUrl) patch.request = requestUrl;
+
+    const { error } = await supabase.from("logdata").update(patch).eq("id", id);
     if (error) console.error("[GetEventsLogger] logApiError update error:", error.message);
     return id;
   }
