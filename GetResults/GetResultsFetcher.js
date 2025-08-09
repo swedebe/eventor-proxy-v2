@@ -93,6 +93,12 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     }
 
     let parsed;
+    // Collect warnings from the parser.  Both parseResultsStandard and
+    // parseResultsMultiDay return an object with { results, warnings }.
+    // Relay events currently return only an array of results and no
+    // warnings.  We initialise warningsFromParse as an empty array and
+    // assign it based on the parser output below.
+    let warningsFromParse = [];
     try {
       // Hämta eventform: prioritera XML-attributet, annars hämta första icke-nulla raden i events
       let eventform = eventformFromXml || '';
@@ -125,56 +131,27 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
           if (mStartDate) eventdate = mStartDate[1];
         }
 
-        const { results, warnings } = parseResultsMultiDay(xml, eventId, organisationId, batchid, eventdate);
-        parsed = results;
+        // parseResultsMultiDay returns { results, warnings }
+        const { results: mdResults, warnings: mdWarnings } = parseResultsMultiDay(
+          xml,
+          eventId,
+          organisationId,
+          batchid,
+          eventdate
+        );
+        parsed = mdResults;
+        warningsFromParse = mdWarnings || [];
         // Extra guard: ta bort classresultnumberofstarts helt för multiday
         parsed = parsed.map(({ classresultnumberofstarts, ...rest }) => rest);
-
-        for (const warn of warnings) {
-          console.warn(`[parseResultsMultiDay][Warning] ${warn}`);
-        }
-        // After processing multi‑day results, insert any warnings into the 'warnings' table.
-        // Each warning contains a message detailing the issue.  We include organisationId,
-        // eventId and batchid to allow manual follow‑up.  personid is set to 0 because
-        // the underlying competitor lacked a valid identifier.
-        if (warnings && warnings.length > 0) {
-          const warningRows = warnings.map((msg) => ({
-            organisationid: organisationId,
-            eventid: eventId,
-            batchid,
-            personid: 0,
-            message: msg,
-            created: new Date().toISOString()
-          }));
-          try {
-            const { error: warningsInsertError } = await supabase.from('warnings').insert(warningRows);
-            if (warningsInsertError) {
-              console.error(`${logContext} Fel vid insert av warnings:`, warningsInsertError.message);
-              await insertLogData(supabase, {
-                source: 'GetResultsFetcher',
-                level: 'error',
-                errormessage: `Fel vid insert av warnings: ${warningsInsertError.message}`,
-                organisationid: organisationId,
-                eventid: eventId,
-                batchid
-              });
-            }
-          } catch (warningInsertException) {
-            console.error(`${logContext} Undantag vid insert av warnings:`, warningInsertException);
-            await insertLogData(supabase, {
-              source: 'GetResultsFetcher',
-              level: 'error',
-              errormessage: `Undantag vid insert av warnings: ${warningInsertException.message}`,
-              organisationid: organisationId,
-              eventid: eventId,
-              batchid
-            });
-          }
-        }
       } else if (eventform === 'RelaySingleDay') {
+        // RelaySingleDay parser currently returns just an array of results.
         parsed = parseResultsRelay(xml);
+        warningsFromParse = [];
       } else {
-        parsed = parseResultsStandard(xml);
+        // Standard single-day events: parse and destructure results and warnings.
+        const { results: stdResults, warnings: stdWarnings } = parseResultsStandard(xml);
+        parsed = stdResults;
+        warningsFromParse = stdWarnings || [];
       }
     } catch (parseError) {
       console.error(`${logContext} Fel vid parsning av resultat:`, parseError);
@@ -201,6 +178,53 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       row.batchid = batchid;
       row.clubparticipation = organisationId;
       row.eventid = eventId;
+    }
+
+    // Logga och skriv varningar till warnings-tabellen.  Alla parser
+    // returnerar warnings som en array av strängar.  Vi loggar dem
+    // först på konsolen och därefter försöker vi skriva en rad per
+    // varning i tabellen "warnings".  Varje rad innehåller
+    // organisationid, eventid, batchid, personid=0, ett meddelande
+    // samt ett tidsstämplat created-fält.  Om insert misslyckas
+    // loggas felet med insertLogData.
+    try {
+      if (warningsFromParse && warningsFromParse.length > 0) {
+        for (const warn of warningsFromParse) {
+          console.warn(`[parseResults][Warning] ${warn}`);
+        }
+        const warningRows = warningsFromParse.map((msg) => ({
+          organisationid: organisationId,
+          eventid: eventId,
+          batchid: batchid,
+          personid: 0,
+          message: msg,
+          created: new Date().toISOString()
+        }));
+        const { error: warningsInsertError } = await supabase
+          .from('warnings')
+          .insert(warningRows);
+        if (warningsInsertError) {
+          console.error(`${logContext} Fel vid insert av warnings:`, warningsInsertError.message);
+          await insertLogData(supabase, {
+            source: 'GetResultsFetcher',
+            level: 'error',
+            errormessage: `Fel vid insert av warnings: ${warningsInsertError.message}`,
+            organisationid: organisationId,
+            eventid: eventId,
+            batchid
+          });
+        }
+      }
+    } catch (warningInsertException) {
+      console.error(`${logContext} Undantag vid insert av warnings:`, warningInsertException);
+      await insertLogData(supabase, {
+        source: 'GetResultsFetcher',
+        level: 'error',
+        errormessage: `Undantag vid insert av warnings: ${warningInsertException.message}`,
+        organisationid: organisationId,
+        eventid: eventId,
+        batchid
+      });
     }
 
     const { status, error: insertError } = await supabase
