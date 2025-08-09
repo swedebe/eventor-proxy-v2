@@ -133,6 +133,44 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         for (const warn of warnings) {
           console.warn(`[parseResultsMultiDay][Warning] ${warn}`);
         }
+        // After processing multi‑day results, insert any warnings into the 'warnings' table.
+        // Each warning contains a message detailing the issue.  We include organisationId,
+        // eventId and batchid to allow manual follow‑up.  personid is set to 0 because
+        // the underlying competitor lacked a valid identifier.
+        if (warnings && warnings.length > 0) {
+          const warningRows = warnings.map((msg) => ({
+            organisationid: organisationId,
+            eventid: eventId,
+            batchid,
+            personid: 0,
+            message: msg,
+            created: new Date().toISOString()
+          }));
+          try {
+            const { error: warningsInsertError } = await supabase.from('warnings').insert(warningRows);
+            if (warningsInsertError) {
+              console.error(`${logContext} Fel vid insert av warnings:`, warningsInsertError.message);
+              await insertLogData(supabase, {
+                source: 'GetResultsFetcher',
+                level: 'error',
+                errormessage: `Fel vid insert av warnings: ${warningsInsertError.message}`,
+                organisationid: organisationId,
+                eventid: eventId,
+                batchid
+              });
+            }
+          } catch (warningInsertException) {
+            console.error(`${logContext} Undantag vid insert av warnings:`, warningInsertException);
+            await insertLogData(supabase, {
+              source: 'GetResultsFetcher',
+              level: 'error',
+              errormessage: `Undantag vid insert av warnings: ${warningInsertException.message}`,
+              organisationid: organisationId,
+              eventid: eventId,
+              batchid
+            });
+          }
+        }
       } else if (eventform === 'RelaySingleDay') {
         parsed = parseResultsRelay(xml);
       } else {
@@ -236,5 +274,3 @@ async function fetchResultsForClub({ organisationId, batchid, apikey }) {
 }
 
 module.exports = { fetchResultsForEvent, fetchResultsForClub };
-
-
