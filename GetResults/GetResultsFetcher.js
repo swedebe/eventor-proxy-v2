@@ -144,9 +144,10 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         // Extra guard: ta bort classresultnumberofstarts helt för multiday
         parsed = parsed.map(({ classresultnumberofstarts, ...rest }) => rest);
       } else if (eventform === 'RelaySingleDay') {
-        // RelaySingleDay parser currently returns just an array of results.
-        parsed = parseResultsRelay(xml);
-        warningsFromParse = [];
+        // RelaySingleDay parser returns an object { results, warnings }
+        const { results: relayResults, warnings: relayWarnings } = parseResultsRelay(xml);
+        parsed = relayResults;
+        warningsFromParse = relayWarnings || [];
       } else {
         // Standard single-day events: parse and destructure results and warnings.
         const { results: stdResults, warnings: stdWarnings } = parseResultsStandard(xml);
