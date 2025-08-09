@@ -249,30 +249,8 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       batchid
     });
 
-    /*
-     * Uppdatera tableupdates för tabellen \"results\". Detta motsvarar
-     * beteendet i GetEvents-flödet där tabellen uppdateras när nya events
-     * sparas. Upsert säkerställer att raden skapas om den saknas och
-     * uppdateras om den redan finns. Vi använder batchid för spårning.
-     */
-    try {
-      await supabase
-        .from('tableupdates')
-        .upsert(
-          {
-            tablename: 'results',
-            lastupdated: new Date().toISOString(),
-            updatedbybatchid: batchid
-          },
-          { onConflict: 'tablename' }
-        );
-    } catch (e) {
-      console.warn(`[GetResultsFetcher] Kunde inte uppdatera tableupdates: ${e.message}`);
-    }
-
     // returnera en succésignal så att anropande kod kan skilja på lyckade och
-    // misslyckade körningar. Om vi inte returnerar något betraktas undefined
-    // som success i GetResultsRouter.
+    // misslyckade körningar.
     return { success: true, insertedRows: totalInserted };
   } catch (e) {
     console.error(`${logContext} Ovänterat fel:`, e);
