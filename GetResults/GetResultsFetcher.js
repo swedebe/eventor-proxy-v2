@@ -75,13 +75,12 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     }
     const completed = new Date();
 
-    // Logga API-anropet i logdata (använd 'completed', inte 'ended')
+    // Logga API-anropet i logdata (utan httpstatus; med started/completed)
     try {
       await insertLogData(supabase, {
         source: 'Eventor',
         level: response?.ok ? 'info' : 'error',
         request: url,
-        httpstatus: `${response?.status} ${response?.statusText}`,
         started: started.toISOString(),
         completed: completed.toISOString(),
         organisationid: organisationId,
@@ -239,7 +238,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     }
 
     console.log(`${logContext} Klart. Insatta rader: ${totalInserted}`);
-    // 8) Info-rad i logdata (utan numberofrowsafter)
+    // 8) Info-rad i logdata (utan numberofrowsafter/httpstatus)
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'info',
