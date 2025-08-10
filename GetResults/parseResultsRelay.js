@@ -112,6 +112,7 @@ function getTeamPrimaryOrgId(teamResult) {
  *     a) Given sequence="1" != "vacant", och
  *     b) TeamMemberResult.Organisation.OrganisationId === importingOrganisationId
  * - clubparticipation sätts till löparens klubb (OrganisationId på member-nivå).
+ * - Om Event.eventForm === "RelaySingleDay" sätts classresultnumberofstarts till null (ignoreras).
  */
 function parseResultsRelay(xmlString, importingOrganisationId) {
   const parser = new XMLParser({
@@ -138,7 +139,11 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
     return { results, warnings };
   }
 
-  // Event identifiers and metadata
+  // Event metadata
+  const eventFormRaw = resultList?.Event?.['@_eventForm'] || null;
+  const eventForm = typeof eventFormRaw === 'string' ? eventFormRaw.trim() : null;
+  const isRelaySingleDay = (eventForm || '').toLowerCase() === 'relaysingleday';
+
   let eventId = null;
   if (resultList.Event?.EventId != null) {
     const eid = parseInt(resultList.Event.EventId, 10);
@@ -180,14 +185,25 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
     const klassfaktor = klassFaktorFromClassTypeId(classTypeId);
 
     // classresultnumberofstarts (antal lag i klassen)
+    // VIKTIGT: På stafetter (RelaySingleDay) ska vi inte hämta/visa antal lag → alltid null.
     let classStarts = null;
-    if (classResult['@_numberOfStarts'] != null) {
-      const cs = parseInt(classResult['@_numberOfStarts'], 10);
-      if (!Number.isNaN(cs)) classStarts = cs;
-    }
-    if (classStarts == null && classResult?.ClassRaceInfo?.['@_noOfStarts'] != null) {
-      const cs = parseInt(classResult.ClassRaceInfo['@_noOfStarts'], 10);
-      if (!Number.isNaN(cs)) classStarts = cs;
+    if (!isRelaySingleDay) {
+      if (classResult['@_numberOfStarts'] != null) {
+        const cs = parseInt(classResult['@_numberOfStarts'], 10);
+        if (!Number.isNaN(cs)) classStarts = cs;
+      }
+      if (classStarts == null && classResult?.ClassRaceInfo?.['@_noOfStarts'] != null) {
+        const cs = parseInt(classResult.ClassRaceInfo['@_noOfStarts'], 10);
+        if (!Number.isNaN(cs)) classStarts = cs;
+      }
+    } else {
+      // För diagnos: hjälp oss se om XML faktiskt innehöll siffror som vi ignorerar.
+      const xmlStartsAttr = classResult['@_numberOfStarts'] ?? classResult?.ClassRaceInfo?.['@_noOfStarts'] ?? null;
+      if (xmlStartsAttr != null) {
+        warnings.push(
+          `Event ${eventId}: Ignorerar antal lag (numberOfStarts=${xmlStartsAttr}) eftersom eventForm=RelaySingleDay.`
+        );
+      }
     }
 
     // eventraceid
@@ -321,7 +337,7 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
             tmr.CompetitorStatus['@_value'] ?? tmr.CompetitorStatus.value ?? null;
         }
 
-        // points only when all needed values exist
+        // points only when all needed values exist – men classStarts är null på RelaySingleDay → points blir null
         let points = null;
         if (
           klassfaktor != null &&
@@ -355,7 +371,7 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
           resultcompetitorstatus,
 
           // class/meta
-          classresultnumberofstarts: classStarts,
+          classresultnumberofstarts: classStarts, // null för RelaySingleDay
           classtypeid: classTypeId,
           klassfaktor,
           points,
@@ -363,11 +379,11 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
           // person
           personage,
 
-          // Viktigt: behåll löparens klubb (ska INTE skrivas över i fetchern)
+          // behåll löparens klubb (ska inte skrivas över i fetchern)
           clubparticipation: competitorOrgId ?? null
         });
 
-        // Info-varning om teamets primära klubb skiljer sig från löparens/imp-klubb (diagnostik)
+        // Info-varning om teamets primära klubb skiljer sig från importerande klubb (diagnostik)
         if (teamPrimaryOrgId != null && importingOrganisationId != null && teamPrimaryOrgId !== importingOrganisationId) {
           warnings.push(
             `Team "${relayteamname ?? '(okänt)'}": primär teamklubb (${teamPrimaryOrgId}) ≠ importerande klubb (${importingOrganisationId}).`
