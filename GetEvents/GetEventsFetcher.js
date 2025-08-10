@@ -1,3 +1,4 @@
+// GetEvents/GetEventsFetcher.js
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 const { logApiStart, logApiEnd, logApiError } = require('./GetEventsLogger');
@@ -15,10 +16,12 @@ async function fetchAndStoreEvents(organisationId) {
   const renderJobId = process.env.RENDER_INSTANCE_ID || null;
   const comment = 'Hämtning av events';
 
+  // Räkna rader innan
   const { count: beforeCount } = await supabase
     .from('events')
     .select('*', { count: 'exact', head: true });
 
+  // Skapa batchrun
   const { data: batchData, error: batchError } = await supabase
     .from('batchrun')
     .insert([
@@ -111,25 +114,59 @@ async function fetchAndStoreEvents(organisationId) {
   // Parsning av XML till JS
   const parsed = await parseStringPromise(xml, { explicitArray: true });
 
-  // Hämta club-map för att kunna skapa organiser-namn
-  const { data: clubsData } = await supabase.from('clubs').select('organisationid, clubname');
+  // Hämta organiser-namn från eventorclubs (viktigt!)
+  const { data: organiserClubs, error: organiserClubsErr } = await supabase
+    .from('eventorclubs')
+    .select('organisationid, clubname');
+
+  if (organiserClubsErr) {
+    console.warn('[GetEvents] Kunde inte läsa eventorclubs:', organiserClubsErr.message);
+  }
+
   const clubMap = {};
-  (clubsData || []).forEach((c) => (clubMap[String(c.organisationid)] = c.clubname));
+  (organiserClubs || []).forEach((c) => (clubMap[String(c.organisationid)] = c.clubname));
 
   const events = Array.isArray(parsed?.EventList?.Event) ? parsed.EventList.Event : [];
+
+  // Hjälpfunktion: extrahera Organiser-organisationId som strängar
+  const getOrganiserIds = (event) => {
+    // Vanlig struktur: Event.Organiser[0].OrganisationId: [ "611", "xxx" ]
+    let ids =
+      (event?.Organiser?.[0]?.OrganisationId || [])
+        .map((orgId) => (typeof orgId === 'object' && orgId !== null ? orgId._ ?? orgId : orgId))
+        .filter(Boolean) || [];
+
+    // Alternativ struktur: Event.Organiser[].Organisation[].OrganisationId
+    if (ids.length === 0 && Array.isArray(event?.Organiser)) {
+      ids = event.Organiser.flatMap((o) =>
+        (o?.Organisation || [])
+          .map((org) => org?.OrganisationId?.[0])
+          .filter(Boolean)
+      );
+    }
+
+    // Som sista fallback: Event.Organisers?.OrganisationId
+    if (ids.length === 0) {
+      const fallback = event?.Organisers?.[0]?.OrganisationId || [];
+      ids = fallback.map((orgId) =>
+        typeof orgId === 'object' && orgId !== null ? orgId._ ?? orgId : orgId
+      ).filter(Boolean);
+    }
+
+    return ids.map(String);
+  };
+
   const rows = events.flatMap((event) => {
     const eventid = parseInt(event.EventId?.[0]);
     const eventnameBase = event.Name?.[0] || '';
-    const organiserIds = (event.Organiser?.[0]?.OrganisationId || [])
-      .map((orgId) => orgId?._ || orgId)
-      .filter(Boolean);
 
+    const organiserIds = getOrganiserIds(event);
     const organiserNames = organiserIds
       .map((id) => clubMap[String(id)] || `Organisation ${id}`)
       .join(', ');
 
+    // Spara alltid id:n (viktigt krav)
     const eventorganiser_ids = organiserIds.join(',');
-    const eventorganiser_names = organiserNames;
 
     const eventclassificationid = parseInt(event.EventClassificationId?.[0]);
     const eventform = event.$?.eventForm || null;
@@ -146,13 +183,18 @@ async function fetchAndStoreEvents(organisationId) {
       const fullEventName =
         eventform === 'IndMultiDay' ? `${eventnameBase} – ${racename}` : eventnameBase;
 
+      // Extra debug i produktion för att verifiera fixen
+      console.log(
+        `[GetEvents] Organisers för eventraceid=${eventraceid}: ids=[${eventorganiser_ids}] names="${organiserNames}"`
+      );
+
       return {
         eventid,
         eventraceid,
         eventdate,
         eventname: fullEventName,
-        eventorganiser: eventorganiser_names,
-        eventorganiser_ids,
+        eventorganiser: organiserNames,     // byggt från eventorclubs
+        eventorganiser_ids,                 // sparar id-listan oförändrad
         eventclassificationid: Number.isFinite(eventclassificationid) ? eventclassificationid : null,
         eventdistance,
         eventform,
