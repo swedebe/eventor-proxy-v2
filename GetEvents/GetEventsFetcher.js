@@ -1,6 +1,6 @@
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
-const { logApiCallSimple } = require('./GetEventsLogger');
+const { logApiStart, logApiEnd, logApiError } = require('./GetEventsLogger');
 const { parseStringPromise } = require('xml2js');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -14,8 +14,6 @@ async function fetchAndStoreEvents(organisationId) {
   const appVersion = null;
   const renderJobId = process.env.RENDER_INSTANCE_ID || null;
   const comment = 'Hämtning av events';
-
-  console.log('[GetEvents] Initierar batchrun med organisationId:', organisationId);
 
   const { count: beforeCount } = await supabase
     .from('events')
@@ -47,6 +45,7 @@ async function fetchAndStoreEvents(organisationId) {
   const batchId = batchData.id;
   console.log('[GetEvents] Skapade batchrun med ID:', batchId);
 
+  // Hämta API‑nyckel för klubben
   const { data: club, error: clubError } = await supabase
     .from('clubs')
     .select('apikey')
@@ -57,9 +56,9 @@ async function fetchAndStoreEvents(organisationId) {
     console.error('[GetEvents] Saknar API-nyckel för organisationId:', organisationId);
     throw new Error('API-nyckel saknas för angiven organisation');
   }
-
   const apiKey = club.apikey;
 
+  // Datumintervall: 30 dagar bakåt t.o.m. idag
   const today = new Date();
   const fromDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
   const fromDateStr = `${fromDate.toISOString().split('T')[0]} 00:00:00`;
@@ -69,68 +68,58 @@ async function fetchAndStoreEvents(organisationId) {
     fromDateStr
   )}&toDate=${encodeURIComponent(toDateStr)}&classificationIds=1,2,3,6&EventStatusId=3`;
 
-  const log = await logApiCallSimple({ request: url });
+  // Startlogg i logdata
+  const logId = await logApiStart(url, batchId, {
+    source: 'GetEvents',
+    organisationid: organisationId,
+    comment: 'Hämtar events (30 dagar bakåt)',
+  });
 
   let xml;
   let numberOfErrors = 0;
 
   try {
-    const response = await axios.get(url, {
-      headers: { ApiKey: apiKey },
-    });
-
+    const response = await axios.get(url, { headers: { ApiKey: apiKey } });
     console.log('Eventor response status:', response.status);
     xml = response.data;
 
-    await supabase
-      .from('logdata')
-      .update({
-        responsecode: '200 OK',
-        completed: new Date().toISOString(),
-      })
-      .eq('id', log.id);
+    // Avsluta loggning OK
+    await logApiEnd(logId, response.status, 'OK');
   } catch (err) {
-    numberOfErrors = 1;
-    console.error('[GetEvents] Fel vid anrop till Eventor:', err.message);
+    numberOfErrors += 1;
+    const status = err?.response?.status ?? null;
+    await logApiError(logId, status, err?.message || 'Okänt fel', url);
+    console.error('[GetEvents] Fel vid hämtning av events:', err?.message || err);
+    // Markera batch som partial/fel men fortsätt till update i slutet
+    xml = null;
+  }
 
-    await supabase
-      .from('logdata')
-      .update({
-        responsecode: err.response?.status || 'ERR',
-        errormessage: err.message,
-        completed: new Date().toISOString(),
-      })
-      .eq('id', log.id);
-
+  if (!xml) {
     await supabase
       .from('batchrun')
       .update({
         endtime: new Date().toISOString(),
-        status: 'failed',
-        comment: `Fel vid anrop till Eventor: ${err.message}`,
+        status: numberOfErrors === 0 ? 'success' : 'partial',
         numberoferrors: numberOfErrors,
+        numberofrowsafter: beforeCount || 0,
       })
       .eq('id', batchId);
 
-    throw err;
+    return { insertedCount: 0 };
   }
 
-  const result = await parseStringPromise(xml);
+  // Parsning av XML till JS
+  const parsed = await parseStringPromise(xml, { explicitArray: true });
 
-  const { data: eventorclubs, error: lookupError } = await supabase
-    .from('eventorclubs')
-    .select('organisationid, clubname');
+  // Hämta club-map för att kunna skapa organiser-namn
+  const { data: clubsData } = await supabase.from('clubs').select('organisationid, clubname');
+  const clubMap = {};
+  (clubsData || []).forEach((c) => (clubMap[String(c.organisationid)] = c.clubname));
 
-  if (lookupError) {
-    console.error('[GetEvents] Kunde inte hämta eventorclubs:', lookupError);
-    throw new Error('Kunde inte hämta klubbnamn från eventorclubs');
-  }
-
-  const clubMap = Object.fromEntries(eventorclubs.map(c => [String(c.organisationid), c.clubname]));
-
-  const events = (result.EventList?.Event || []).flatMap((event) => {
+  const events = Array.isArray(parsed?.EventList?.Event) ? parsed.EventList.Event : [];
+  const rows = events.flatMap((event) => {
     const eventid = parseInt(event.EventId?.[0]);
-    const eventnameBase = event.Name?.[0];
+    const eventnameBase = event.Name?.[0] || '';
     const organiserIds = (event.Organiser?.[0]?.OrganisationId || [])
       .map((orgId) => orgId?._ || orgId)
       .filter(Boolean);
@@ -145,9 +134,7 @@ async function fetchAndStoreEvents(organisationId) {
     const eventclassificationid = parseInt(event.EventClassificationId?.[0]);
     const eventform = event.$?.eventForm || null;
 
-    const races = Array.isArray(event.EventRace)
-      ? event.EventRace
-      : [event.EventRace];
+    const races = Array.isArray(event.EventRace) ? event.EventRace : [event.EventRace];
     if (!races || !races[0]) return [];
 
     return races.map((race) => {
@@ -166,7 +153,7 @@ async function fetchAndStoreEvents(organisationId) {
         eventname: fullEventName,
         eventorganiser: eventorganiser_names,
         eventorganiser_ids,
-        eventclassificationid,
+        eventclassificationid: Number.isFinite(eventclassificationid) ? eventclassificationid : null,
         eventdistance,
         eventform,
         batchid: batchId,
@@ -174,31 +161,23 @@ async function fetchAndStoreEvents(organisationId) {
     });
   });
 
-  console.log("[GetEvents] Antal events att spara:", events.length);
-  if (events.length > 0) {
-    console.log("[GetEvents] Första radens data:", events[0]);
-  } else {
-    console.warn("[GetEvents] Inga events hittades i Eventor-svaret.");
+  // Upsert events
+  const { data: inserted, error: insertError } = await supabase
+    .from('events')
+    .upsert(rows, { onConflict: 'eventraceid' })
+    .select();
+
+  if (insertError) {
+    numberOfErrors += 1;
+    console.error('[GetEvents] Fel vid upsert till events:', insertError.message);
   }
 
-  const inserted = [];
-  for (const e of events) {
-    const { error } = await supabase
-      .from('events')
-      .upsert(e, { onConflict: 'eventraceid' });
-
-    if (!error) {
-      inserted.push(e);
-    } else {
-      numberOfErrors++;
-      console.error(`[GetEvents] Fel vid insert av eventraceid=${e.eventraceid}:`, error.message);
-    }
-  }
-
+  // Räkna efter
   const { count: afterCount } = await supabase
     .from('events')
     .select('*', { count: 'exact', head: true });
 
+  // Uppdatera batchrun
   await supabase
     .from('batchrun')
     .update({
@@ -209,8 +188,8 @@ async function fetchAndStoreEvents(organisationId) {
     })
     .eq('id', batchId);
 
-  console.log(`[GetEvents] Inserted ${inserted.length} events to Supabase`);
-  return { insertedCount: inserted.length };
+  console.log(`[GetEvents] Inserted ${inserted?.length || 0} events to Supabase`);
+  return { insertedCount: inserted?.length || 0 };
 }
 
 module.exports = { fetchAndStoreEvents };
