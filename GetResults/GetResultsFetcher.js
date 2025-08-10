@@ -9,6 +9,86 @@ const parseResultsMultiDay = require('./parseResultsMultiDay.js');
 const parseResultsRelay = require('./parseResultsRelay.js');
 const { insertLogData } = require('./logHelpersGetResults.js');
 
+/**
+ * Utility: Normalize a field of organiser ids to an array of clean id strings.
+ *
+ * Accepts values like "611", "611,123", "611, 123" or arrays of ids.
+ * Trims whitespace and filters out empty segments. Keeps order of appearance and de-duplicates.
+ *
+ * @param {string|array|null|undefined} ids Raw ids from parser
+ * @returns {string[]} List of id strings
+ */
+function normalizeOrganiserIds(ids) {
+  if (!ids) return [];
+  // If already an array, map to strings and trim
+  if (Array.isArray(ids)) {
+    const list = [];
+    const seen = new Set();
+    for (const id of ids) {
+      const s = String(id).trim();
+      if (s && !seen.has(s)) {
+        list.push(s);
+        seen.add(s);
+      }
+    }
+    return list;
+  }
+  // Otherwise split on comma
+  const parts = String(ids)
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  const out = [];
+  const seen = new Set();
+  for (const part of parts) {
+    if (!seen.has(part)) {
+      out.push(part);
+      seen.add(part);
+    }
+  }
+  return out;
+}
+
+/**
+ * Given a list of organiser ids, fetch their club names from the eventorclubs table.
+ * Falls back to "Organisation <id>" if no clubname is found for an id.
+ *
+ * @param {string[]} ids Array of organiser id strings
+ * @returns {Promise<Map<string,string>>} Map from id to clubname or fallback string
+ */
+async function fetchOrganiserNames(ids) {
+  const result = new Map();
+  if (!ids || ids.length === 0) return result;
+  try {
+    const { data, error } = await supabase
+      .from('eventorclubs')
+      .select('organisationid, clubname')
+      .in('organisationid', ids);
+    if (error) {
+      console.error('[GetResultsFetcher] Fel vid hämtning av eventorclubs:', error.message);
+    }
+    // Build result map
+    if (Array.isArray(data)) {
+      for (const row of data) {
+        const idStr = String(row.organisationid);
+        const name = (row.clubname || '').trim();
+        if (name) {
+          result.set(idStr, name);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[GetResultsFetcher] Ovänterat fel vid hämtning av eventorclubs:', e);
+  }
+  // ensure each id has an entry; fallback to "Organisation <id>"
+  for (const id of ids) {
+    if (!result.has(id)) {
+      result.set(id, `Organisation ${id}`);
+    }
+  }
+  return result;
+}
+
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -166,12 +246,24 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     }
 
     // 5) Sätt batchid & eventid, och varna om clubparticipation överskrivs
+    // Samla samtidigt eventorganiserids för senare namnuppslag
+    const collectedOrganiserIds = new Set();
     for (const row of parsed) {
       const originalClubParticipation = row.clubparticipation ?? null;
 
       row.batchid = batchid;
       row.eventid = eventId;
       row.clubparticipation = organisationId; // påför importerande klubb
+
+      // Samla organiser-id:n från raden för senare namnuppslag
+      try {
+        const ids = normalizeOrganiserIds(row.eventorganiserids);
+        for (const id of ids) {
+          collectedOrganiserIds.add(id);
+        }
+      } catch (_) {
+        // ignore parse errors
+      }
 
       if (
         originalClubParticipation != null &&
@@ -184,6 +276,25 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         if (row.relayteamname) parts.push(`team=\"${row.relayteamname}\"`);
         if (row.relayleg != null) parts.push(`leg=${row.relayleg}`);
         warningsFromParse.push(parts.join(' | '));
+      }
+    }
+
+    // Slå upp namn för organiser-id:n och sätt eventorganiser-fältet
+    if (collectedOrganiserIds.size > 0) {
+      const idList = Array.from(collectedOrganiserIds);
+      const nameMap = await fetchOrganiserNames(idList);
+      for (const row of parsed) {
+        try {
+          const ids = normalizeOrganiserIds(row.eventorganiserids);
+          if (ids.length === 0) {
+            row.eventorganiser = null;
+          } else {
+            const names = ids.map((id) => nameMap.get(id) || `Organisation ${id}`);
+            row.eventorganiser = names.join(', ');
+          }
+        } catch (_) {
+          // leave row.eventorganiser as is if something fails
+        }
       }
     }
 
