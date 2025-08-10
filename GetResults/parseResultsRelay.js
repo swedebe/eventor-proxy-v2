@@ -131,12 +131,9 @@ function parseResultsRelay(xmlString) {
     if (!Number.isNaN(eid)) eventId = eid;
   }
 
-  // eventtype from <Event><EventClassificationId>
-  let eventtype = null;
-  if (resultList.Event?.EventClassificationId != null) {
-    const et = parseInt(resultList.Event.EventClassificationId, 10);
-    eventtype = Number.isNaN(et) ? null : et;
-  }
+  // The results table no longer stores an event type.  The information
+  // contained in <Event><EventClassificationId> is recorded in the
+  // events table instead.  We intentionally ignore it here.
 
   // Event year for age calculation
   let eventYear = null;
@@ -306,9 +303,6 @@ function parseResultsRelay(xmlString) {
           eventid: eventId,
           eventraceid: eventRaceId,
           eventclassname: eventClassName,
-
-          // event/type
-          eventtype,
 
           // team-level final outcome
           relayteamname,
