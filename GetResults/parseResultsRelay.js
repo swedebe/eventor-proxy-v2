@@ -1,3 +1,4 @@
+// GetResults/parseResultsRelay.js
 const { XMLParser } = require('fast-xml-parser');
 
 /**
@@ -98,6 +99,10 @@ function readTypedValue(node, wantedType = 'Leg') {
 /**
  * Parse relay results XML into flat rows for `results` and collect warnings.
  * Each TeamMemberResult (leg runner) becomes one row.
+ *
+ * NEW: For combination teams, we now IGNORE runners whose personal club
+ * does not match the team's club. We set results.clubparticipation to the
+ * team club id (teamOrgId).
  */
 function parseResultsRelay(xmlString) {
   const parser = new XMLParser({
@@ -130,10 +135,6 @@ function parseResultsRelay(xmlString) {
     const eid = parseInt(resultList.Event.EventId, 10);
     if (!Number.isNaN(eid)) eventId = eid;
   }
-
-  // The results table no longer stores an event type.  The information
-  // contained in <Event><EventClassificationId> is recorded in the
-  // events table instead.  We intentionally ignore it here.
 
   // Event year for age calculation
   let eventYear = null;
@@ -218,6 +219,18 @@ function parseResultsRelay(xmlString) {
           tr.TeamStatus['@_value'] ?? tr.TeamStatus.value ?? null;
       }
 
+      // Team organisation (the club the team belongs to)
+      let teamOrgId = null;
+      if (tr?.Organisation?.OrganisationId != null) {
+        const toid = parseInt(tr.Organisation.OrganisationId, 10);
+        if (!Number.isNaN(toid)) teamOrgId = toid;
+      }
+      if (teamOrgId == null) {
+        warnings.push(
+          `TeamResult saknar OrganisationId för lag "${relayteamname ?? '(okänt)'}". Alla medlemmar kommer att behållas (ingen filtrering möjlig).`
+        );
+      }
+
       // Members per team → one DB row per member
       const memberResults = tr?.TeamMemberResult
         ? Array.isArray(tr.TeamMemberResult)
@@ -249,11 +262,20 @@ function parseResultsRelay(xmlString) {
           if (!Number.isNaN(a)) personage = a;
         }
 
-        // organisation id for competitor (will be overwritten by fetcher with importing club)
+        // Organisation id for competitor (personal club)
         let competitorOrgId = null;
         if (tmr?.Organisation?.OrganisationId != null) {
           const oid = parseInt(tmr.Organisation.OrganisationId, 10);
           if (!Number.isNaN(oid)) competitorOrgId = oid;
+        }
+
+        // FILTER: ignore team members of another club (combination teams)
+        if (teamOrgId != null && competitorOrgId != null && competitorOrgId !== teamOrgId) {
+          const name = getPersonName(tmr?.Person || {});
+          warnings.push(
+            `Ignorerar ${name} (personid=${personId}) då löparens klubb (${competitorOrgId}) inte matchar lagets klubb (${teamOrgId}).`
+          );
+          continue; // skip this member
         }
 
         // leg-specific values
@@ -262,7 +284,7 @@ function parseResultsRelay(xmlString) {
         // resulttime = tmr.Time (leg time) → seconds
         const resulttime = toSecondsRelay(tmr?.Time);
 
-        // resulttimediff = TimeBehind type="Leg" (already seconds in XML, but parse robustly)
+        // resulttimediff = TimeBehind type="Leg"
         const timeBehindLegRaw = readTypedValue(tmr?.TimeBehind, 'Leg');
         const resulttimediff = toSecondsRelay(timeBehindLegRaw);
 
@@ -327,8 +349,8 @@ function parseResultsRelay(xmlString) {
           // person
           personage,
 
-          // will be overwritten to importing club in fetcher
-          clubparticipation: competitorOrgId
+          // IMPORTANT: store team club id for stats (and filtering already applied)
+          clubparticipation: teamOrgId ?? competitorOrgId ?? null
         });
       }
     }
