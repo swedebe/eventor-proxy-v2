@@ -1,5 +1,6 @@
 // GetPersons/GetPersonsLogger.js
-// Logger for GetPersons. Uses 'logdata' table with columns: source, level, organisationid, request, comment, started, completed, responsecode, batchid.
+// Logger for GetPersons – trimmed to only use columns known to exist for your schema.
+// Removed eventraceid/personid/eventid to avoid schema errors.
 
 const { createClient } = require('@supabase/supabase-js');
 
@@ -17,9 +18,6 @@ async function insertLogData(payload) {
     source: payload?.source || 'GetPersons',
     level: payload?.level || 'info',
     organisationid: payload?.organisationid ?? null,
-    eventid: payload?.eventid ?? null,
-    eventraceid: payload?.eventraceid ?? null,
-    personid: payload?.personid ?? null,
     request: payload?.request ?? null,
     comment: payload?.comment ?? null,
     started: nowIso(),

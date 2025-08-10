@@ -1,7 +1,11 @@
 // GetPersons/GetPersonsFetcher.js
 // Fetches persons via Eventor API and upserts into 'persons' table (no deletes).
 // Updates only rows for the same organisationid (onConflict: organisationid,personid).
-// Designed for production debugging: strips unknown columns reported by Supabase and retries.
+// Adjusted per feedback:
+//  - Store Eventor's modify date as 'eventormodifydate' (timestamptz-friendly ISO string).
+//  - Do not store nationalitycountryid.
+//  - Include batchid (if the column exists; if not, SQL migration adds it).
+// Production debugging: strips unknown columns reported by Supabase and retries.
 
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
@@ -82,7 +86,6 @@ function parsePersonsXml(xmlString, organisationId) {
 
     const sex = asString(p?.['@_sex']); // attribute sex="M|F"
     const birthdate = asString(p?.BirthDate?.Date);
-    const nationalityCountryId = asString(p?.Nationality?.CountryId?.['@_value']) || asString(p?.Nationality?.CountryId?.value);
     const modifyIso = combineToIso(p?.ModifyDate?.Date, p?.ModifyDate?.Clock);
 
     const row = {
@@ -92,8 +95,7 @@ function parsePersonsXml(xmlString, organisationId) {
       personnamefamily: family,
       personnamegiven: given,
       personbirthdate: birthdate,
-      nationalitycountryid: nationalityCountryId,
-      modifydate: modifyIso,
+      eventormodifydate: modifyIso, // renamed per feedback
       // batchid is added in fetchAndStorePersons
     };
 
@@ -123,7 +125,7 @@ async function fetchAndStorePersons(organisationId) {
     .select('*', { count: 'exact', head: true })
     .eq('organisationid', organisationId);
 
-  const batchid = require('uuid').v4();
+  const batchid = uuidv4();
   const { error: batchErr } = await supabase.from('batchrun').insert([{
     id: batchid,
     clubparticipation: organisationId,
