@@ -12,12 +12,10 @@ function toSecondsRelay(value) {
 
   if (typeof value === 'string') {
     const trimmed = value.trim();
-    // Pure digits -> already seconds
     if (/^\d+$/.test(trimmed)) {
       const secs = parseInt(trimmed, 10);
       return Number.isNaN(secs) ? null : secs;
     }
-    // Split by colon for HH:MM:SS or MM:SS
     const parts = trimmed.split(':').map((v) => parseInt(v, 10));
     if (parts.some((v) => Number.isNaN(v))) return null;
     if (parts.length === 2) return parts[0] * 60 + parts[1];
@@ -67,44 +65,55 @@ function getPersonName(person) {
     given = givenField
       .map((g) => (typeof g === 'string' ? g : g?.['#text'] || ''))
       .join(' ');
+  } else if (typeof givenField === 'object' && givenField !== null) {
+    given = givenField['#text'] ?? '';
   }
   return `${fam} ${given}`.trim();
 }
 
-/**
- * Robust selector: returns value from element with attribute type="Leg"
- * for nodes that may appear as scalar, object, or array with typed entries.
- * If no typed entry exists, falls back to first scalar/entry.
- */
-function readTypedValue(node, wantedType = 'Leg') {
-  if (node == null) return null;
-
-  // Scalar string/number → return directly
-  if (typeof node === 'string' || typeof node === 'number') return node;
-
-  // Object with '#text' and optional '@_type'
-  if (!Array.isArray(node)) {
-    if (node['@_type'] && node['@_type'] !== wantedType) return null;
-    return node['#text'] ?? node.value ?? null;
+/** Hämta Given med sequence="1" (case-insensitivt), robust för sträng/objekt/array. */
+function getGivenSeq1(person) {
+  const given = person?.PersonName?.Given;
+  if (!given) return null;
+  if (typeof given === 'string') return given;
+  if (Array.isArray(given)) {
+    const g1 = given.find(
+      (g) => (typeof g === 'object' && g?.['@_sequence'] === '1') || typeof g === 'string'
+    );
+    if (g1 == null) return null;
+    if (typeof g1 === 'string') return g1;
+    return g1['#text'] ?? null;
   }
+  if (typeof given === 'object') {
+    if (!given['@_sequence'] || given['@_sequence'] === '1') {
+      return given['#text'] ?? null;
+    }
+  }
+  return null;
+}
 
-  // Array → choose the one matching @type="Leg", else first entry
-  const typed = node.find((n) => n && n['@_type'] === wantedType);
-  const pick = typed ?? node[0];
-  if (pick == null) return null;
-  if (typeof pick === 'string' || typeof pick === 'number') return pick;
-  return pick['#text'] ?? pick.value ?? null;
+/** Primär klubb på Team-nivå: första <Organisation><OrganisationId> om flera finns. */
+function getTeamPrimaryOrgId(teamResult) {
+  const org = teamResult?.Organisation;
+  if (!org) return null;
+  const list = Array.isArray(org) ? org : [org];
+  for (const o of list) {
+    const id = toIntOrNull(o?.OrganisationId);
+    if (id != null) return id;
+  }
+  return null;
 }
 
 /**
  * Parse relay results XML into flat rows for `results` and collect warnings.
- * Each TeamMemberResult (leg runner) becomes one row.
- *
- * NEW: For combination teams, we now IGNORE runners whose personal club
- * does not match the team's club. We set results.clubparticipation to the
- * team club id (teamOrgId).
+ * IMPORTANT:
+ * - importingOrganisationId: den klubb som anropet gjordes för (t.ex. 114).
+ *   Vi behåller ENDAST TeamMemberResult där
+ *     a) Given sequence="1" != "vacant", och
+ *     b) TeamMemberResult.Organisation.OrganisationId === importingOrganisationId
+ * - clubparticipation sätts till löparens klubb (OrganisationId på member-nivå).
  */
-function parseResultsRelay(xmlString) {
+function parseResultsRelay(xmlString, importingOrganisationId) {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
@@ -219,17 +228,8 @@ function parseResultsRelay(xmlString) {
           tr.TeamStatus['@_value'] ?? tr.TeamStatus.value ?? null;
       }
 
-      // Team organisation (the club the team belongs to)
-      let teamOrgId = null;
-      if (tr?.Organisation?.OrganisationId != null) {
-        const toid = parseInt(tr.Organisation.OrganisationId, 10);
-        if (!Number.isNaN(toid)) teamOrgId = toid;
-      }
-      if (teamOrgId == null) {
-        warnings.push(
-          `TeamResult saknar OrganisationId för lag "${relayteamname ?? '(okänt)'}". Alla medlemmar kommer att behållas (ingen filtrering möjlig).`
-        );
-      }
+      // Primär lagklubb (för varningar) – men filtret sker mot importingOrganisationId
+      const teamPrimaryOrgId = getTeamPrimaryOrgId(tr);
 
       // Members per team → one DB row per member
       const memberResults = tr?.TeamMemberResult
@@ -239,6 +239,36 @@ function parseResultsRelay(xmlString) {
         : [];
 
       for (const tmr of memberResults) {
+        // Skip 1: vacant?
+        const given1 = (getGivenSeq1(tmr?.Person) || '').trim().toLowerCase();
+        if (given1 === 'vacant') {
+          const name = getPersonName(tmr?.Person || {});
+          warnings.push(
+            `Ignorerar 'vacant' löpare (Given seq=1=vacant) i team "${relayteamname ?? '(okänt)'}". Namn: ${name || '<tomt>'}`
+          );
+          continue;
+        }
+
+        // Löparens klubb (OrganisationId)
+        let competitorOrgId = null;
+        if (tmr?.Organisation?.OrganisationId != null) {
+          const oid = parseInt(tmr.Organisation.OrganisationId, 10);
+          if (!Number.isNaN(oid)) competitorOrgId = oid;
+        }
+
+        // Skip 2: fel klubb jämfört med importerande klubb
+        if (
+          importingOrganisationId != null &&
+          competitorOrgId != null &&
+          competitorOrgId !== importingOrganisationId
+        ) {
+          const name = getPersonName(tmr?.Person || {});
+          warnings.push(
+            `Ignorerar ${name} (personid=${parsePersonId(tmr?.Person?.PersonId) ?? 'okänd'}) – löparens klubb (${competitorOrgId}) matchar ej importerande klubb (${importingOrganisationId}).`
+          );
+          continue;
+        }
+
         // personid (0 + warning om saknas)
         let personId = parsePersonId(tmr?.Person?.PersonId);
         if (personId == null) {
@@ -260,22 +290,6 @@ function parseResultsRelay(xmlString) {
         if (personage == null && tmr?.Person?.Age != null) {
           const a = parseInt(tmr.Person.Age, 10);
           if (!Number.isNaN(a)) personage = a;
-        }
-
-        // Organisation id for competitor (personal club)
-        let competitorOrgId = null;
-        if (tmr?.Organisation?.OrganisationId != null) {
-          const oid = parseInt(tmr.Organisation.OrganisationId, 10);
-          if (!Number.isNaN(oid)) competitorOrgId = oid;
-        }
-
-        // FILTER: ignore team members of another club (combination teams)
-        if (teamOrgId != null && competitorOrgId != null && competitorOrgId !== teamOrgId) {
-          const name = getPersonName(tmr?.Person || {});
-          warnings.push(
-            `Ignorerar ${name} (personid=${personId}) då löparens klubb (${competitorOrgId}) inte matchar lagets klubb (${teamOrgId}).`
-          );
-          continue; // skip this member
         }
 
         // leg-specific values
@@ -349,15 +363,39 @@ function parseResultsRelay(xmlString) {
           // person
           personage,
 
-          // IMPORTANT: store team club id for stats (and filtering already applied)
-          clubparticipation: teamOrgId ?? competitorOrgId ?? null
+          // Viktigt: behåll löparens klubb (ska INTE skrivas över i fetchern)
+          clubparticipation: competitorOrgId ?? null
         });
+
+        // Info-varning om teamets primära klubb skiljer sig från löparens/imp-klubb (diagnostik)
+        if (teamPrimaryOrgId != null && importingOrganisationId != null && teamPrimaryOrgId !== importingOrganisationId) {
+          warnings.push(
+            `Team "${relayteamname ?? '(okänt)'}": primär teamklubb (${teamPrimaryOrgId}) ≠ importerande klubb (${importingOrganisationId}).`
+          );
+        }
       }
     }
   }
 
   console.log(`[parseResultsRelay] Totalt antal resultat: ${results.length}`);
   return { results, warnings };
+}
+
+function readTypedValue(node, wantedType = 'Leg') {
+  if (node == null) return null;
+
+  if (typeof node === 'string' || typeof node === 'number') return node;
+
+  if (!Array.isArray(node)) {
+    if (node['@_type'] && node['@_type'] !== wantedType) return null;
+    return node['#text'] ?? node.value ?? null;
+  }
+
+  const typed = node.find((n) => n && n['@_type'] === wantedType);
+  const pick = typed ?? node[0];
+  if (pick == null) return null;
+  if (typeof pick === 'string' || typeof pick === 'number') return pick;
+  return pick['#text'] ?? pick.value ?? null;
 }
 
 module.exports = parseResultsRelay;
