@@ -1,3 +1,6 @@
+// server.js
+// Full server wiring, including autorun of persons batch at startup (disable with AUTO_RUN_PERSONS_ON_START=false).
+
 const express = require('express');
 const dotenv = require('dotenv');
 const axios = require('axios');
@@ -10,56 +13,38 @@ app.use(express.json());
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-// Routrar
-const getEventsRouter = require('./GetEvents/GetEventsRouter.js');
-const getResultsRouter = require('./GetResults/GetResultsRouter.js');
-const getEventsTestRouter = require('./GetEvents/GetEventsTestRouter');
+// Routers
+let getEventsRouter;
+let getResultsRouter;
+let getEventsTestRouter;
+let getPersonsRouter;
 
-app.use('/api', getEventsRouter);
-app.use('/api', getResultsRouter);
-app.use('/api', getEventsTestRouter);
+try { getEventsRouter = require('./GetEvents/GetEventsRouter.js'); } catch {}
+try { getResultsRouter = require('./GetResults/GetResultsRouter.js'); } catch {}
+try { getEventsTestRouter = require('./GetEvents/GetEventsTestRouter.js'); } catch {}
+try { getPersonsRouter = require('./GetPersons/GetPersonsRouter.js'); } catch {}
 
-// Health check
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+// Mount under /api (only if present)
+if (getEventsRouter) app.use('/api', getEventsRouter);
+if (getResultsRouter) app.use('/api', getResultsRouter);
+if (getEventsTestRouter) app.use('/api', getEventsTestRouter);
+if (getPersonsRouter) app.use('/api', getPersonsRouter);
+
+// Health
+app.get('/health', (_req, res) => {
+  res.status(200).json({ ok: true, time: new Date().toISOString() });
 });
 
-// Proxy för Eventor-anrop – använder x-api-key från headers
-app.get('/api/eventor/results', async (req, res) => {
+// Simple proxy for debugging Eventor responses (optional)
+app.get('/api/proxy', async (req, res) => {
   try {
-    const { organisationId, eventId } = req.query;
-    const apiKey = req.headers['x-api-key'];
+    const { target } = req.query;
+    if (!target) return res.status(400).json({ error: 'Missing target query param' });
 
-    if (!organisationId || !eventId || !apiKey) {
-      return res.status(400).json({ error: 'Missing organisationId, eventId eller x-api-key' });
-    }
-
-    const url = 'https://eventor.orientering.se/api/results/organisation';
-
-    // DEBUGLOGG
-    console.log('[Proxy] API-nyckel mottagen:', apiKey);
-    console.log('[Proxy] Anropar Eventor med URL:', url);
-    console.log('[Proxy] Parametrar:', {
-      organisationIds: organisationId,
-      eventId: eventId,
-      includeTrackCompetitors: false,
-      includeSplitTimes: false,
-      includeTimes: true,
-      includeAdditionalResultValues: false
-    });
-
-    const response = await axios.get(url, {
-      params: {
-        organisationIds: organisationId,
-        eventId: eventId,
-        includeTrackCompetitors: false,
-        includeSplitTimes: false,
-        includeTimes: true,
-        includeAdditionalResultValues: false
-      },
+    const response = await axios.get(target, {
       headers: {
+        ApiKey: process.env.EVENTOR_API_KEY || process.env.EventorApiKey,
         Accept: 'application/xml',
-        ApiKey: apiKey // skickas som header
       }
     });
 
@@ -71,8 +56,25 @@ app.get('/api/eventor/results', async (req, res) => {
   }
 });
 
-// Starta server
+// Start server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Servern kör på port ${PORT}`);
 });
+
+// Autorun persons batch across clubs at startup (with job protection)
+const autorun = String(process.env.AUTO_RUN_PERSONS_ON_START || 'true').toLowerCase() !== 'false';
+if (autorun) {
+  setTimeout(async () => {
+    try {
+      console.log('[Startup] Auto-run GetPersons batch across clubs...');
+      const { runGetPersonsForAllClubs } = require('./GetPersons/GetPersonsRunner');
+      const result = await runGetPersonsForAllClubs({ pauseMs: 600 });
+      console.log('[Startup] Auto-run finished:', result);
+    } catch (e) {
+      console.error('[Startup] Auto-run failed:', e?.message || e);
+    }
+  }, 3000);
+}
+
+module.exports = server;
