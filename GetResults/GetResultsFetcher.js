@@ -105,7 +105,8 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     let warningsFromParse = [];
     try {
       if (parserKind === 'relay') {
-        const out = parseResultsRelay(xml);
+        // VIKTIGT: skicka med importerande klubb så parsern kan filtrera bort andra klubbar + "vacant"
+        const out = parseResultsRelay(xml, organisationId);
         if (Array.isArray(out)) {
           parsed = out;
         } else {
@@ -174,7 +175,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
 
       row.batchid = batchid;
       row.eventid = eventId;
-      // row.clubparticipation = organisationId;  // <— borttagen överskrivning
+      // row.clubparticipation = organisationId;  // <— borttagen överskrivning (medvetet)
 
       if (
         originalClubParticipation != null &&
@@ -266,8 +267,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       batchid
     });
 
-    // returnera en succésignal så att anropande kod kan skilja på lyckade och
-    // misslyckade körningar.
+    // returnera en succésignal
     return { success: true, insertedRows: totalInserted };
   } catch (e) {
     console.error(`${logContext} Ovänterat fel:`, e);
