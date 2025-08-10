@@ -1,10 +1,10 @@
 // GetPersons/GetPersonsFetcher.js
 // Fetches persons via Eventor API and upserts into 'persons' table (no deletes).
 // Updates only rows for the same organisationid (onConflict: organisationid,personid).
-// Adjusted per feedback:
-//  - Store Eventor's modify date as 'eventormodifydate' (timestamptz-friendly ISO string).
-//  - Do not store nationalitycountryid.
-//  - Include batchid (if the column exists; if not, SQL migration adds it).
+// Adjusted:
+//  - eventormodifydate (ISO) stored instead of modifydate
+//  - nationalitycountryid ignored
+//  - personnamegiven extracted specifically from <Given sequence="1">...</Given>
 // Production debugging: strips unknown columns reported by Supabase and retries.
 
 const axios = require('axios');
@@ -32,6 +32,44 @@ function combineToIso(dateStr, clockStr) {
   if (!d) return null;
   if (t) return `${d}T${t}`;
   return d;
+}
+
+// Extracts the Given name, prioritizing <Given sequence="1">...</Given>.
+// Handles cases where Given is a single object with attributes or an array of objects/strings.
+function extractGiven(rawGiven) {
+  if (rawGiven == null) return null;
+
+  // If array: try to find sequence="1" first, else first with text, else first string
+  if (Array.isArray(rawGiven)) {
+    // Prefer an object with @_sequence === '1'
+    const seq1 = rawGiven.find(g => g && typeof g === 'object' && g['@_sequence'] === '1');
+    if (seq1) {
+      if (typeof seq1['#text'] === 'string') return String(seq1['#text']);
+      if (typeof seq1 === 'string') return seq1;
+    }
+    // Next: any object that has #text
+    const anyObjWithText = rawGiven.find(g => g && typeof g === 'object' && typeof g['#text'] === 'string');
+    if (anyObjWithText) return String(anyObjWithText['#text']);
+    // Finally: any string entry
+    const anyStr = rawGiven.find(g => typeof g === 'string');
+    if (anyStr) return anyStr;
+    return null;
+  }
+
+  // If object: fast-xml-parser typically gives { '#text': 'Bengt', '@_sequence': '1' }
+  if (typeof rawGiven === 'object') {
+    if (typeof rawGiven['#text'] === 'string') return String(rawGiven['#text']);
+    // Fallbacks (unlikely)
+    const keys = Object.keys(rawGiven);
+    for (const k of keys) {
+      const val = rawGiven[k];
+      if (typeof val === 'string') return val;
+    }
+    return null;
+  }
+
+  // Primitive string/number fallback
+  return asString(rawGiven);
 }
 
 function parsePersonsXml(xmlString, organisationId) {
@@ -69,20 +107,7 @@ function parsePersonsXml(xmlString, organisationId) {
     }
 
     const family = asString(p?.PersonName?.Family);
-    let given = null;
-    const rawGiven = p?.PersonName?.Given;
-    if (Array.isArray(rawGiven)) {
-      let best = null;
-      for (const g of rawGiven) {
-        if (typeof g === 'string') best = best ?? g;
-        else if (g && typeof g === 'object') {
-          if (g['#text']) best = best ?? g['#text'];
-        }
-      }
-      given = best ? String(best) : null;
-    } else {
-      given = asString(rawGiven);
-    }
+    const given = extractGiven(p?.PersonName?.Given);
 
     const sex = asString(p?.['@_sex']); // attribute sex="M|F"
     const birthdate = asString(p?.BirthDate?.Date);
@@ -95,7 +120,7 @@ function parsePersonsXml(xmlString, organisationId) {
       personnamefamily: family,
       personnamegiven: given,
       personbirthdate: birthdate,
-      eventormodifydate: modifyIso, // renamed per feedback
+      eventormodifydate: modifyIso,
       // batchid is added in fetchAndStorePersons
     };
 
