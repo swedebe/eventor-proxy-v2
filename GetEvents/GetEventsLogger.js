@@ -15,37 +15,39 @@ function nowIso() {
 
 async function insertLogData(payload) {
   const row = {
-    source: payload.source ?? "GetEvents",
-    level: payload.level ?? "info",
-    organisationid: payload.organisationid ?? null,
-    eventid: payload.eventid ?? null,
-    batchid: payload.batchid ?? null,
-    request: payload.request ?? null,
-    errormessage: payload.errormessage ?? null,
-    comment: payload.comment ?? null,           // använd comment istället för response
-    responsecode: payload.responsecode ?? null,
+    source: payload?.source || 'GetEvents',
+    level: payload?.level || 'info',
+    organisationid: payload?.organisationid ?? null,
+    request: payload?.request ?? null,
+    comment: payload?.comment ?? null, // ingen 'response'-kolumn i schema – använd comment
     timestamp: nowIso(),
-    started: payload.started ?? nowIso(),
-    completed: payload.completed ?? null,
+    started: nowIso(),
+    completed: nowIso(),
+    responsecode: payload?.responsecode ?? null,
+    batchid: payload?.batchid ?? null,
   };
 
-  const { data, error } = await supabase.from("logdata").insert(row).select().single();
+  const { error } = await supabase.from("logdata").insert(row);
   if (error) {
     console.error("[GetEventsLogger] insertLogData error:", error.message, row);
-    return null;
   }
-  return data;
 }
 
+/**
+ * Starta loggrad i logdata och returnera id.
+ * @param {string} requestUrl
+ * @param {string|null} batchid
+ * @param {object} meta  { source, organisationid, comment }
+ * @returns {Promise<string|null>}
+ */
 async function logApiStart(requestUrl, batchid, meta = {}) {
   const row = {
-    source: meta.source ?? "GetEventsFetcher",
-    level: "info",
-    batchid,
+    source: meta.source || 'GetEvents',
+    level: 'info',
     organisationid: meta.organisationid ?? null,
-    eventid: meta.eventid ?? null,
+    batchid: batchid ?? null,
     request: requestUrl,
-    comment: meta.comment ?? null,             // skriv ev. notis i comment
+    comment: meta.comment ?? null,
     timestamp: nowIso(),
     started: nowIso(),
   };
@@ -58,6 +60,12 @@ async function logApiStart(requestUrl, batchid, meta = {}) {
   return data.id;
 }
 
+/**
+ * Avsluta loggrad med statuskod och ev. kommentar.
+ * @param {string} id
+ * @param {number|null} statusCode
+ * @param {string|null} note
+ */
 async function logApiEnd(id, statusCode = 200, note = null) {
   if (!id) return;
   const patch = {
@@ -73,46 +81,42 @@ async function logApiEnd(id, statusCode = 200, note = null) {
   }
 }
 
+/**
+ * Logga fel. Om id saknas skapas en ny rad.
+ * @param {string|null|Error} idOrError
+ * @param {number|string|null} statusCodeOrMsg
+ * @param {string|null} message
+ * @param {string|null} requestUrl
+ * @returns {Promise<string|null>}
+ */
 async function logApiError(idOrError, statusCodeOrMsg, message, requestUrl) {
-  const now = nowIso();
-  let id = null;
-  let statusCode = null;
-  let errMsg = message ?? null;
-
-  if (typeof idOrError === "string") {
-    id = idOrError;
-    statusCode = typeof statusCodeOrMsg === "number" ? statusCodeOrMsg : -1;
-    if (!errMsg && typeof statusCodeOrMsg === "string") errMsg = statusCodeOrMsg;
-  } else {
-    const err = idOrError;
-    statusCode = err?.response?.status ?? -1;
-    if (!errMsg) errMsg = err?.message ?? "error";
-  }
-
-  if (id) {
+  // Om första parametern är ett befintligt id – uppdatera den raden som fel
+  if (typeof idOrError === "string" && idOrError.length > 0) {
     const patch = {
-      completed: now,
-      responsecode: statusCode,
-      errormessage: errMsg,
-      timestamp: now,
+      level: 'error',
+      completed: nowIso(),
+      responsecode: typeof statusCodeOrMsg === 'number' ? statusCodeOrMsg : null,
+      comment: [statusCodeOrMsg, message].filter(Boolean).map(String).join(' | ').slice(0, 2000),
+      timestamp: nowIso(),
     };
-    if (requestUrl) patch.request = requestUrl;
-
-    const { error } = await supabase.from("logdata").update(patch).eq("id", id);
-    if (error) console.error("[GetEventsLogger] logApiError update error:", error.message);
-    return id;
+    const { error } = await supabase.from("logdata").update(patch).eq("id", idOrError);
+    if (error) {
+      console.error("[GetEventsLogger] logApiError update error:", error.message, { id: idOrError });
+    }
+    return idOrError;
   }
 
+  // Annars skapa ny felrad
   const row = {
-    source: "GetEventsFetcher",
-    level: "error",
+    source: 'GetEvents',
+    level: 'error',
     request: requestUrl ?? null,
-    responsecode: statusCode,
-    errormessage: errMsg,
-    timestamp: now,
-    started: now,
-    completed: now,
+    comment: [statusCodeOrMsg, message].filter(Boolean).map(String).join(' | ').slice(0, 2000),
+    timestamp: nowIso(),
+    started: nowIso(),
+    completed: nowIso(),
   };
+
   const { data, error } = await supabase.from("logdata").insert(row).select().single();
   if (error) {
     console.error("[GetEventsLogger] logApiError insert error:", error.message, row);
