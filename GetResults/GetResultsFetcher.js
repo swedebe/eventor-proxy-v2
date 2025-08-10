@@ -1,6 +1,6 @@
 // GetResultsFetcher.js
 // Väljer parser (Standard/MultiDay/Relay), loggar, rensar gamla rader,
-// skriver nya rader, och lägger varningar – inkl. varning om clubparticipation-överskrivning.
+// skriver nya rader, och lägger varningar – utan att skriva över organisation/clubparticipation.
 
 const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
@@ -142,6 +142,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     console.log(`${logContext} ${parsed.length} resultat tolkades från XML`);
 
     // 4) Rensa gamla rader för aktuell klubb+event
+    // Vi utgår från att tidigare körningar skrev rader för importerande klubb under samma event.
     try {
       const { error: delErr } = await supabase
         .from('results')
@@ -165,25 +166,41 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       console.error(`${logContext} Ovänterat fel vid delete:`, e);
     }
 
-    // 5) Sätt batchid & eventid, och varna om clubparticipation överskrivs
+    // 5) Sätt batchid & eventid, men skriv INTE över clubparticipation.
+    //    Om parsern gett ett annat klubb-id än importerande klubb varnar vi,
+    //    men vi låter parserns värde stå kvar.
     for (const row of parsed) {
       const originalClubParticipation = row.clubparticipation ?? null;
 
       row.batchid = batchid;
       row.eventid = eventId;
-      row.clubparticipation = organisationId; // påför importerande klubb
+      // row.clubparticipation = organisationId;  // <— borttagen överskrivning
 
       if (
         originalClubParticipation != null &&
         originalClubParticipation !== organisationId
       ) {
         const parts = [];
-        parts.push(`clubparticipation ändrades ${originalClubParticipation} → ${organisationId}`);
+        parts.push(
+          `XML clubparticipation (${originalClubParticipation}) matchar inte importerande klubb (${organisationId}) – raden sparas med XML-värdet`
+        );
         if (row.personid != null) parts.push(`personid=${row.personid}`);
         if (row.eventraceid != null) parts.push(`eventraceid=${row.eventraceid}`);
-        if (row.relayteamname) parts.push(`team=\"${row.relayteamname}\"`);
+        if (row.relayteamname) parts.push(`team="${row.relayteamname}"`);
         if (row.relayleg != null) parts.push(`leg=${row.relayleg}`);
-        warningsFromParse.push(parts.join(' | '));
+        const msg = parts.join(' | ');
+
+        // Logga varning i Render-konsolen
+        console.warn(`[parseResults][Warning] ${msg}`);
+
+        // Lägg till i varningslistan för senare insert i warnings-tabellen
+        warningsFromParse.push(msg);
+      }
+
+      if (originalClubParticipation == null) {
+        const msg = `XML clubparticipation saknas – importerande klubb är ${organisationId}. Raden sparas med null i clubparticipation.`;
+        console.warn(`[parseResults][Warning] ${msg}`);
+        warningsFromParse.push(msg);
       }
     }
 
