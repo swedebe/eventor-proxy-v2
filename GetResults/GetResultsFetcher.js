@@ -140,16 +140,51 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       // Ingen data men detta är inte ett fel – returnera success med 0 rader
       return { success: true, insertedRows: 0 };
     }
-    console.log(`${logContext} ${parsed.length} resultat tolkades från XML`);
+
+    // Innan vi fortsätter behöver vi respektera "readonly"-flaggan på befintliga resultat.
+    // Rader i tabellen `results` med `readonly = 1` ska sparas oförändrade när nya
+    // resultat importeras. För att undvika dubbletter ska vi därför filtrera bort
+    // eventuella tolkade resultat som matchar en readonly-rad (samma personid,
+    // eventraceid och relayleg). Detta görs innan gamla rader rensas och nya skrivs.
+    try {
+      const { data: readonlyRows, error: readonlyRowsErr } = await supabase
+        .from('results')
+        .select('personid, eventraceid, relayleg')
+        .eq('clubparticipation', organisationId)
+        .eq('eventid', eventId)
+        .eq('readonly', 1);
+      if (readonlyRowsErr) {
+        console.warn(`${logContext} Kunde inte läsa readonly-resultatrader:`, readonlyRowsErr.message);
+      } else if (Array.isArray(readonlyRows) && readonlyRows.length > 0) {
+        const skipSet = new Set(
+          readonlyRows.map((r) => `${r.personid}|${r.eventraceid}|${r.relayleg ?? ''}`)
+        );
+        const originalCount = parsed.length;
+        parsed = parsed.filter((row) => {
+          const key = `${row.personid}|${row.eventraceid}|${row.relayleg ?? ''}`;
+          return !skipSet.has(key);
+        });
+        const filteredOut = originalCount - parsed.length;
+        if (filteredOut > 0) {
+          console.log(`${logContext} Skippar ${filteredOut} resultat från XML eftersom motsvarande rader är readonly i databasen`);
+        }
+      }
+    } catch (e) {
+      console.warn(`${logContext} Ovänterat fel vid filtrering av readonly-resultat:`, e.message);
+    }
+
+    console.log(`${logContext} ${parsed.length} resultat tolkades från XML (efter filtrering)`);
 
     // 4) Rensa gamla rader för aktuell klubb+event
     // Vi utgår från att tidigare körningar skrev rader för importerande klubb under samma event.
+    // Rader med readonly=1 ska INTE raderas – de har manuellt redigerat innehåll.
     try {
       const { error: delErr } = await supabase
         .from('results')
         .delete()
         .eq('clubparticipation', organisationId)
-        .eq('eventid', eventId);
+        .eq('eventid', eventId)
+        .not('readonly', 'eq', 1);
       if (delErr) {
         console.error(`${logContext} Fel vid delete av tidigare rader:`, delErr.message);
         await insertLogData(supabase, {
@@ -161,7 +196,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
           batchid
         });
       } else {
-        console.log(`${logContext} Tidigare rader (club=${organisationId}, event=${eventId}) rensade`);
+        console.log(`${logContext} Tidigare rader (club=${organisationId}, event=${eventId}) rensade (readonly rader sparade)`);
       }
     } catch (e) {
       console.error(`${logContext} Ovänterat fel vid delete:`, e);
@@ -294,6 +329,8 @@ async function fetchResultsForClub({ organisationId, batchid, apikey }) {
   const { data: events, error: eventError } = await supabase
     .from('events')
     .select('eventid')
+    // Hämta endast event där readonly != 1 (null räknas som ej readonly)
+    .not('readonly', 'eq', 1)
     .order('eventid', { ascending: true });
 
   if (eventError) {

@@ -66,6 +66,8 @@ router.get('/runGetResults', async (req, res) => {
     const { data: eventList, error: eventError } = await supabase
       .from('events')
       .select('eventid')
+      // Ta bara med events där readonly != 1 (null betraktas som ej readonly)
+      .not('readonly', 'eq', 1)
       .order('eventid', { ascending: true });
 
     if (eventError) {
