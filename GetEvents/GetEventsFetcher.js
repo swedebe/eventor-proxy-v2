@@ -1,297 +1,335 @@
-// GetEventsFetcher.js
-// Hämtar tävlingar från Eventor API för ett givet datumintervall och skriver/uppdaterar dem i tabellen `events`.
-// Stödjer att intervallet delas upp i flera mindre segment om tidsperioden är lång. Respekterar readonly-rader i tabellen.
-
+// GetEvents/GetEventsFetcher.js
+const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
-const fetch = require('node-fetch');
-const { insertLogData } = require('./logHelpersGetResults.js');
+const { logApiStart, logApiEnd, logApiError } = require('./GetEventsLogger');
+const { parseStringPromise } = require('xml2js');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// För eventimport använder vi en separat supabase-klient. Service-nyckeln ger skrivbehörighet.
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-// Standardklassificeringar att inkludera när inga specificeras
-const DEFAULT_CLASSIFICATION_IDS = [1, 2, 3, 6];
+const EVENTOR_API_BASE = 'https://eventor.orientering.se/api';
 
 /**
- * Hjälpfunktion: formaterar ett Date-objekt till yyyy-mm-dd.
- * @param {Date} date
- * @returns {string}
+ * Hämtar och lagrar events för en viss organisation inom ett givet datumintervall.
+ * Om ingen tidsperiod anges hämtas som standard de senaste 30 dagarna. En lista
+ * med klassificerings-id:n kan skickas in, annars används standardvärdena
+ * [1,2,3,6]. Vid längre intervall (över ca 90 dagar) delas anropet upp i
+ * mindre segment för att undvika tidsgränser hos Eventor. Alla segment
+ * används i samma batchrun så att resultat och fel summeras.
+ *
+ * @param {string|number} organisationId Organisationens Eventor ID
+ * @param {object} [options] Valfria parametrar
+ * @param {string|Date} [options.fromDate] Startdatum (YYYY-MM-DD) eller Date
+ * @param {string|Date} [options.toDate] Slutdatum (YYYY-MM-DD) eller Date
+ * @param {Array<number>} [options.classificationIds] Lista med klassificerings-id:n
+ * @returns {Promise<{ insertedCount: number }>} Antal upsertade rader
  */
-function formatDate(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
+async function fetchAndStoreEvents(organisationId, options = {}) {
+  const initiatedBy = 'manual';
+  const appVersion = null;
+  const renderJobId = process.env.RENDER_INSTANCE_ID || null;
+  const comment = 'Hämtning av events';
 
-/**
- * Beräknar antal dagar mellan två datum.
- * @param {Date} a
- * @param {Date} b
- * @returns {number}
- */
-function daysBetween(a, b) {
-  return Math.floor((b.getTime() - a.getTime()) / (24 * 60 * 60 * 1000));
-}
+  // Räkna rader innan import för att logga batchrun
+  const { count: beforeCount } = await supabase
+    .from('events')
+    .select('*', { count: 'exact', head: true });
 
-/**
- * Delar upp ett datumintervall i mindre intervall med en maximal längd (antal dagar).
- * @param {Date} start
- * @param {Date} end
- * @param {number} maxDays
- * @returns {Array<{ fromDate: Date, toDate: Date }>}
- */
-function chunkDateRange(start, end, maxDays = 90) {
-  const ranges = [];
-  let chunkStart = new Date(start);
-  while (chunkStart <= end) {
-    const chunkEnd = new Date(chunkStart.getTime());
-    chunkEnd.setDate(chunkEnd.getDate() + maxDays - 1);
-    if (chunkEnd > end) chunkEnd.setTime(end.getTime());
-    ranges.push({ fromDate: new Date(chunkStart.getTime()), toDate: new Date(chunkEnd.getTime()) });
-    // nästa chunk börjar dagen efter nuvarande chunkEnd
-    chunkStart = new Date(chunkEnd.getTime());
-    chunkStart.setDate(chunkStart.getDate() + 1);
-  }
-  return ranges;
-}
-
-/**
- * Parsar XML-strängen från Eventor till en lista av event-objekt. Varje objekt
- * innehåller åtminstone eventid, name, startdate och enddate om de finns i XML:en.
- * Övriga fält sätts till null om de saknas. Funktionen använder enkla
- * regular expressions snarare än ett komplett XML-bibliotek för att undvika
- * externa beroenden. Om strukturen skulle ändras i framtiden kan denna
- * funktion behöva justeras.
- * @param {string} xml
- * @returns {Array<Object>}
- */
-function parseEventListXml(xml) {
-  const events = [];
-  if (!xml) return events;
-  // Hitta alla <Event>...</Event> block
-  const eventRegex = /<Event\b[\s\S]*?<\/Event>/gi;
-  let match;
-  while ((match = eventRegex.exec(xml)) !== null) {
-    const eventXml = match[0];
-    const idMatch = eventXml.match(/<Id>(\d+)<\/Id>/i);
-    const nameMatch = eventXml.match(/<Name>([^<]+)<\/Name>/i);
-    // startdate kan ligga i StartDate eller i StartTime/Date beroende på schema
-    let startDate = null;
-    const startTimeDateMatch = eventXml.match(/<StartTime>\s*<Date>([^<]+)<\/Date>/i);
-    const startDateMatch = eventXml.match(/<StartDate>([^<]+)<\/StartDate>/i);
-    if (startTimeDateMatch) startDate = startTimeDateMatch[1];
-    else if (startDateMatch) startDate = startDateMatch[1];
-    let endDate = null;
-    const endTimeDateMatch = eventXml.match(/<EndTime>\s*<Date>([^<]+)<\/Date>/i);
-    const endDateMatch = eventXml.match(/<EndDate>([^<]+)<\/EndDate>/i);
-    if (endTimeDateMatch) endDate = endTimeDateMatch[1];
-    else if (endDateMatch) endDate = endDateMatch[1];
-    const classificationMatch = eventXml.match(/<ClassificationId>(\d+)<\/ClassificationId>/i);
-    const modifyDateMatch = eventXml.match(/<ModifyDate>([^<]+)<\/ModifyDate>/i);
-    events.push({
-      eventid: idMatch ? Number(idMatch[1]) : null,
-      name: nameMatch ? nameMatch[1] : null,
-      startdate: startDate || null,
-      enddate: endDate || null,
-      classificationid: classificationMatch ? Number(classificationMatch[1]) : null,
-      modifydate: modifyDateMatch ? modifyDateMatch[1] : null
-    });
-  }
-  return events;
-}
-
-/**
- * Hämtar event-data för en enskild tidsperiod från Eventor och upserter dem i
- * tabellen `events`. Respekterar readonly-rader genom att filtrera bort eventid
- * som redan finns med readonly=1. Loggar API-anrop och fel via logHelpers.
- * @param {Object} params
- * @param {string} params.fromDate ISO 8601 datum (YYYY-MM-DD)
- * @param {string} params.toDate ISO 8601 datum (YYYY-MM-DD)
- * @param {Array<number>} params.classificationIds
- * @param {number} params.batchid
- * @returns {Promise<{ inserted: number }>} antal upserterade rader
- */
-async function fetchEventsInterval({ fromDate, toDate, classificationIds, batchid }) {
-  // Bygg URL för Eventor API. Använd svenska basen.
-  const queryParams = [];
-  if (fromDate) queryParams.push(`fromDate=${encodeURIComponent(fromDate)}`);
-  if (toDate) queryParams.push(`toDate=${encodeURIComponent(toDate)}`);
-  if (classificationIds && classificationIds.length > 0) {
-    queryParams.push(`classificationIds=${classificationIds.join(',')}`);
-  }
-  const url = `https://eventor.orientering.se/api/events?${queryParams.join('&')}`;
-  const logContext = `[GetEvents] ${fromDate}→${toDate}`;
-  const started = new Date();
-  let response;
-  let xml;
-  try {
-    response = await fetch(url, {
-      headers: {
-        Accept: 'application/xml',
-        // Sätt API-nyckel om den finns definierad i miljön
-        ...(process.env.EVENTOR_API_KEY ? { ApiKey: process.env.EVENTOR_API_KEY } : {})
+  // Skapa batchrun. numberofrequests justeras senare om segmentering används.
+  const { data: batchData, error: batchError } = await supabase
+    .from('batchrun')
+    .insert([
+      {
+        clubparticipation: organisationId,
+        starttime: new Date().toISOString(),
+        status: 'running',
+        comment,
+        numberofrequests: 0, // uppdateras efter segmentering
+        initiatedby: initiatedBy,
+        renderjobid: renderJobId,
+        appversion: appVersion,
+        numberofrowsbefore: beforeCount || 0,
       },
-      timeout: 60000
-    });
-    xml = await response.text();
-  } catch (netErr) {
-    console.error(`${logContext} Nätverksfel mot Eventor:`, netErr);
-    await insertLogData(supabase, {
-      source: 'GetEventsFetcher',
-      level: 'error',
-      errormessage: `Nätverksfel: ${netErr.message}`,
-      batchid,
-      request: url,
-      started: started.toISOString(),
-      completed: new Date().toISOString(),
-      responsecode: -1
-    });
-    return { inserted: 0 };
-  }
-  const completed = new Date();
-  // Logga API-anropet till logdata
-  await insertLogData(supabase, {
-    source: 'Eventor',
-    level: response?.ok ? 'info' : 'error',
-    request: url,
-    started: started.toISOString(),
-    completed: completed.toISOString(),
-    responsecode: response?.status ?? -1,
-    batchid
-  });
-  if (!response?.ok) {
-    console.warn(`${logContext} Eventor-svar ej OK (${response?.status})`);
-    return { inserted: 0 };
-  }
-  // Parsning av XML till eventlist
-  let events;
-  try {
-    events = parseEventListXml(xml);
-  } catch (e) {
-    console.error(`${logContext} Fel vid parsning av XML:`, e);
-    await insertLogData(supabase, {
-      source: 'GetEventsFetcher',
-      level: 'error',
-      errormessage: `Fel vid parsning: ${e.message}`,
-      batchid
-    });
-    return { inserted: 0 };
-  }
-  if (!events || events.length === 0) {
-    console.log(`${logContext} 0 tävlingar hittades`);
-    return { inserted: 0 };
-  }
-  // Läs vilka eventid som är readonly i databasen
-  let readonlyEventIds = [];
-  try {
-    const ids = events.map(ev => ev.eventid).filter(id => id != null);
-    if (ids.length > 0) {
-      const { data: rows, error: readErr } = await supabase
-        .from('events')
-        .select('eventid')
-        .in('eventid', ids)
-        .eq('readonly', 1);
-      if (readErr) {
-        console.warn(`${logContext} Kunde inte läsa readonly events:`, readErr.message);
-      } else {
-        readonlyEventIds = rows.map(r => r.eventid);
-      }
-    }
-  } catch (e) {
-    console.warn(`${logContext} Ovänterat fel vid läsning av readonly events:`, e.message);
-  }
-  // Filtrera bort events vars eventid finns bland readonly
-  const filteredEvents = events.filter(ev => !readonlyEventIds.includes(ev.eventid));
-  if (filteredEvents.length === 0) {
-    console.log(`${logContext} Alla hittade event är readonly – inga uppdateringar`);
-    return { inserted: 0 };
-  }
-  // Upserta eventen i databasen (update or insert). Vi förlitar oss på att det finns en unik constraint på eventid.
-  let insertedCount = 0;
-  try {
-    // Vi använder upsert så att befintliga rader uppdateras (om de inte är readonly, eftersom vi filtrerat bort dem)
-    const { data, error } = await supabase
-      .from('events')
-      .upsert(filteredEvents, { onConflict: 'eventid' })
-      .select();
-    if (error) {
-      console.error(`${logContext} Fel vid upsert av events:`, error.message);
-      await insertLogData(supabase, {
-        source: 'GetEventsFetcher',
-        level: 'error',
-        errormessage: `Fel vid upsert: ${error.message}`,
-        batchid
-      });
-    } else {
-      // Supabase returnerar de uppdaterade raderna om select() används
-      insertedCount = data?.length ?? filteredEvents.length;
-    }
-  } catch (e) {
-    console.error(`${logContext} Ovänterat fel vid upsert:`, e);
-    await insertLogData(supabase, {
-      source: 'GetEventsFetcher',
-      level: 'error',
-      errormessage: `Ovänterat fel vid upsert: ${e.message}`,
-      batchid
-    });
-  }
-  return { inserted: insertedCount };
-}
+    ])
+    .select()
+    .single();
 
-/**
- * Huvudfunktion för att hämta tävlingar för ett större intervall. Hanterar
- * validering av inparametrar, chunkning och summering av upserterade rader.
- * Parametrar kan vara null/undefined för att använda standardvärden.
- * @param {Object} params
- * @param {string|undefined|null} params.fromDate
- * @param {string|undefined|null} params.toDate
- * @param {Array<number>|undefined|null} params.classificationIds
- * @param {number} params.batchid
- * @returns {Promise<{ success: boolean, insertedRows: number }>}
- */
-async function fetchEvents({ fromDate, toDate, classificationIds, batchid }) {
+  if (batchError || !batchData?.id) {
+    console.error('[GetEvents] Fel vid skapande av batchrun:', batchError);
+    throw new Error('Kunde inte skapa batchrun');
+  }
+
+  const batchId = batchData.id;
+  console.log('[GetEvents] Skapade batchrun med ID:', batchId);
+
+  // Hämta API‑nyckel för klubben (per organisation)
+  const { data: club, error: clubError } = await supabase
+    .from('clubs')
+    .select('apikey')
+    .eq('organisationid', organisationId)
+    .single();
+
+  if (clubError || !club?.apikey) {
+    console.error('[GetEvents] Saknar API-nyckel för organisationId:', organisationId);
+    throw new Error('API-nyckel saknas för angiven organisation');
+  }
+  const apiKey = club.apikey;
+
+  // Beräkna datumintervall och segmentering
+  const msPerDay = 24 * 60 * 60 * 1000;
+  let startDate;
+  let endDate;
   try {
-    // Normalisera datum: default från 30 dagar bakåt till dagens datum
-    const now = new Date();
-    let startDate = fromDate ? new Date(fromDate) : new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    let endDate = toDate ? new Date(toDate) : now;
-    // Säkerställ att datumen är giltiga
-    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-      throw new Error('Ogiltigt datumformat');
+    // Normalisera inparametrar. Om ej angivet används standard 30 dagar bakåt.
+    if (options.fromDate) {
+      startDate = options.fromDate instanceof Date ? options.fromDate : new Date(options.fromDate);
     }
-    // Omvänd ordning? byt plats
+    if (options.toDate) {
+      endDate = options.toDate instanceof Date ? options.toDate : new Date(options.toDate);
+    }
+    const now = new Date();
+    if (!endDate) endDate = now;
+    if (!startDate) startDate = new Date(endDate.getTime() - 30 * msPerDay);
+    // Om start efter slut – byt plats
     if (startDate > endDate) {
       const tmp = startDate;
       startDate = endDate;
       endDate = tmp;
     }
-    // Standardklassificeringar om inga anges
-    const classes = Array.isArray(classificationIds) && classificationIds.length > 0 ? classificationIds : DEFAULT_CLASSIFICATION_IDS;
-    // Om tidsintervallet är längre än ett år, dela upp i max 90-dagarsbitar
-    const totalDays = daysBetween(startDate, endDate);
-    const chunks = totalDays > 365 ? chunkDateRange(startDate, endDate, 90) : [{ fromDate: startDate, toDate: endDate }];
-    let totalInserted = 0;
-    for (const chunk of chunks) {
-      const fromStr = formatDate(chunk.fromDate);
-      const toStr = formatDate(chunk.toDate);
-      const { inserted } = await fetchEventsInterval({ fromDate: fromStr, toDate: toStr, classificationIds: classes, batchid });
-      totalInserted += inserted;
-    }
-    return { success: true, insertedRows: totalInserted };
   } catch (e) {
-    console.error('[GetEventsFetcher] Ovänterat fel:', e);
-    await insertLogData(supabase, {
-      source: 'GetEventsFetcher',
-      level: 'error',
-      errormessage: `Ovänterat fel: ${e.message}`,
-      batchid
-    });
-    return { success: false, insertedRows: 0 };
+    console.error('[GetEvents] Ogiltigt datumformat:', e.message);
+    throw new Error('Ogiltigt datumformat');
   }
+
+  // Klassificerings-ID:n
+  const classIds = Array.isArray(options.classificationIds) && options.classificationIds.length > 0
+    ? options.classificationIds
+    : [1, 2, 3, 6];
+
+  // Dela upp i segment om intervallet är långt (>90 dagar)
+  const totalDays = Math.floor((endDate.getTime() - startDate.getTime()) / msPerDay);
+  const segments = [];
+  if (totalDays > 90) {
+    let segStart = new Date(startDate.getTime());
+    while (segStart <= endDate) {
+      const segEnd = new Date(segStart.getTime());
+      segEnd.setDate(segEnd.getDate() + 89);
+      if (segEnd > endDate) segEnd.setTime(endDate.getTime());
+      segments.push({ from: new Date(segStart.getTime()), to: new Date(segEnd.getTime()) });
+      segStart = new Date(segEnd.getTime() + msPerDay);
+    }
+  } else {
+    segments.push({ from: startDate, to: endDate });
+  }
+
+  // Uppdatera batchrun med antal segment som numberofrequests
+  try {
+    await supabase
+      .from('batchrun')
+      .update({ numberofrequests: segments.length })
+      .eq('id', batchId);
+  } catch (e) {
+    console.warn('[GetEvents] Kunde inte uppdatera numberofrequests i batchrun:', e.message);
+  }
+
+  // Hämta organiser-namn från eventorclubs en gång för alla segment
+  const { data: organiserClubs, error: organiserClubsErr } = await supabase
+    .from('eventorclubs')
+    .select('organisationid, clubname');
+  const clubMap = {};
+  (organiserClubs || []).forEach((c) => (clubMap[String(c.organisationid)] = c.clubname));
+  if (organiserClubsErr) {
+    console.warn('[GetEvents] Kunde inte läsa eventorclubs:', organiserClubsErr.message);
+  }
+
+  let totalInserted = 0;
+  let totalErrors = 0;
+
+  // Funktion för att extrahera organisatörs-ID:n (flyttad utanför loop för prestanda)
+  const getOrganiserIds = (event) => {
+    let ids =
+      (event?.Organiser?.[0]?.OrganisationId || [])
+        .map((orgId) =>
+          typeof orgId === 'object' && orgId !== null ? orgId._ ?? orgId : orgId
+        )
+        .filter(Boolean) || [];
+    if (ids.length === 0 && Array.isArray(event?.Organiser)) {
+      ids = event.Organiser.flatMap((o) =>
+        (o?.Organisation || [])
+          .map((org) => org?.OrganisationId?.[0])
+          .filter(Boolean)
+      );
+    }
+    if (ids.length === 0) {
+      const fallback = event?.Organisers?.[0]?.OrganisationId || [];
+      ids = fallback
+        .map((orgId) =>
+          typeof orgId === 'object' && orgId !== null ? orgId._ ?? orgId : orgId
+        )
+        .filter(Boolean);
+    }
+    return ids.map(String);
+  };
+
+  // Loop över alla segment
+  for (const segment of segments) {
+    const fromStr = `${segment.from.toISOString().split('T')[0]} 00:00:00`;
+    const toStr = `${segment.to.toISOString().split('T')[0]} 23:59:59`;
+    const url = `${EVENTOR_API_BASE}/events?fromDate=${encodeURIComponent(
+      fromStr
+    )}&toDate=${encodeURIComponent(toStr)}&classificationIds=${classIds.join(',')}&EventStatusId=3`;
+
+    // Logga API-anropet
+    const logId = await logApiStart(url, batchId, {
+      source: 'GetEvents',
+      organisationid: organisationId,
+      comment: `Hämtar events (${fromStr} – ${toStr})`
+    });
+
+    let xml;
+    try {
+      const response = await axios.get(url, { headers: { ApiKey: apiKey } });
+      console.log(`[GetEvents] Eventor response status: ${response.status}`);
+      xml = response.data;
+      await logApiEnd(logId, response.status, 'OK');
+    } catch (err) {
+      totalErrors += 1;
+      const status = err?.response?.status ?? null;
+      await logApiError(logId, status, err?.message || 'Okänt fel', url);
+      console.error('[GetEvents] Fel vid hämtning av events:', err?.message || err);
+      xml = null;
+    }
+
+    if (!xml) {
+      continue; // hoppa över till nästa segment
+    }
+
+    // Parsning av XML till JS
+    let parsed;
+    try {
+      parsed = await parseStringPromise(xml, { explicitArray: true });
+    } catch (e) {
+      totalErrors += 1;
+      console.error('[GetEvents] Fel vid XML-parsning:', e.message);
+      await logApiError(logId, null, `XML-parsning: ${e.message}`, url);
+      continue;
+    }
+
+    const events = Array.isArray(parsed?.EventList?.Event) ? parsed.EventList.Event : [];
+    // Bygg rader för upsert per segment
+    const segmentRows = events.flatMap((event) => {
+      const eventid = parseInt(event.EventId?.[0]);
+      const eventnameBase = event.Name?.[0] || '';
+      const organiserIds = getOrganiserIds(event);
+      const organiserNames = organiserIds
+        .map((id) => clubMap[String(id)] || `Organisation ${id}`)
+        .join(', ');
+      const eventorganiser_ids = organiserIds.join(',');
+      const eventclassificationid = parseInt(event.EventClassificationId?.[0]);
+      const eventform = event.$?.eventForm || null;
+      const races = Array.isArray(event.EventRace) ? event.EventRace : [event.EventRace];
+      if (!races || !races[0]) return [];
+      return races.map((race) => {
+        const eventraceid = parseInt(race.EventRaceId?.[0]);
+        const racename = race.Name?.[0] || '';
+        const eventdate = race.RaceDate?.[0]?.Date?.[0] || race.EventDate?.[0];
+        const eventdistance = race.WRSInfo?.[0]?.Distance?.[0] || null;
+        const fullEventName = eventform === 'IndMultiDay' ? `${eventnameBase} – ${racename}` : eventnameBase;
+        // Extraloggar för felsökning
+        console.log(
+          `[GetEvents] Organisers för eventraceid=${eventraceid}: ids=[${eventorganiser_ids}] names="${organiserNames}"`
+        );
+        return {
+          eventid,
+          eventraceid,
+          eventdate,
+          eventname: fullEventName,
+          eventorganiser: organiserNames,
+          eventorganiser_ids,
+          eventclassificationid: Number.isFinite(eventclassificationid) ? eventclassificationid : null,
+          eventdistance,
+          eventform,
+          batchid: batchId,
+        };
+      });
+    });
+
+    // Filtrera bort eventid som är readonly
+    let upsertRows = segmentRows;
+    try {
+      const ids = segmentRows.map((r) => r.eventid).filter((id) => id != null);
+      if (ids.length > 0) {
+        const { data: readonlyEvents, error: readonlyErr } = await supabase
+          .from('events')
+          .select('eventid')
+          .in('eventid', ids)
+          .eq('readonly', 1);
+        if (readonlyErr) {
+          console.warn('[GetEvents] Kunde inte läsa readonly-events:', readonlyErr.message);
+        } else if (Array.isArray(readonlyEvents) && readonlyEvents.length > 0) {
+          const skipEventIds = new Set(readonlyEvents.map((e) => e.eventid));
+          upsertRows = segmentRows.filter((row) => !skipEventIds.has(row.eventid));
+          const skipped = segmentRows.length - upsertRows.length;
+          if (skipped > 0) {
+            console.log(`[GetEvents] Skippar ${skipped} rader då deras eventid är readonly`);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[GetEvents] Ovänterat fel vid läsning av readonly-events:', e.message);
+    }
+
+    // Upsert raderna för detta segment
+    try {
+      const { data: inserted, error: insertError } = await supabase
+        .from('events')
+        .upsert(upsertRows, { onConflict: 'eventraceid' })
+        .select();
+      if (insertError) {
+        totalErrors += 1;
+        console.error('[GetEvents] Fel vid upsert till events:', insertError.message);
+      } else {
+        totalInserted += inserted?.length || upsertRows.length;
+      }
+    } catch (e) {
+      totalErrors += 1;
+      console.error('[GetEvents] Ovänterat fel vid upsert:', e.message);
+    }
+  }
+
+  // Räkna efter
+  let afterCount = beforeCount || 0;
+  try {
+    const { count: c, error: countErr } = await supabase
+      .from('events')
+      .select('*', { count: 'exact', head: true });
+    if (countErr) {
+      console.error('[GetEvents] Fel vid count (efter):', countErr.message);
+    } else {
+      afterCount = c || 0;
+    }
+  } catch (e) {
+    console.error('[GetEvents] Ovänterat fel vid count (efter):', e.message);
+  }
+
+  // Uppdatera batchrun med slutstatus
+  try {
+    await supabase
+      .from('batchrun')
+      .update({
+        endtime: new Date().toISOString(),
+        status: totalErrors === 0 ? 'success' : 'partial',
+        numberoferrors: totalErrors,
+        numberofrowsafter: afterCount,
+      })
+      .eq('id', batchId);
+  } catch (e) {
+    console.error('[GetEvents] Fel vid uppdatering av batchrun:', e.message);
+  }
+
+  console.log(`[GetEvents] Inserted ${totalInserted} events to Supabase`);
+  return { insertedCount: totalInserted };
 }
 
-module.exports = { fetchEvents };
+module.exports = { fetchAndStoreEvents };
