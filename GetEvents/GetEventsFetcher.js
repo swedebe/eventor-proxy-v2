@@ -203,10 +203,38 @@ async function fetchAndStoreEvents(organisationId) {
     });
   });
 
-  // Upsert events
+  /*
+   * Before performing the upsert we need to respect the `readonly` flag on
+   * existing event rows. If an event has `readonly` = 1 in the `events`
+   * table it means the row contains manually curated data and must not be
+   * overwritten by automatic imports. To honour this, fetch a list of all
+   * eventids marked as readonly and filter out any new rows belonging to
+   * those events. The existing rows will remain untouched.
+   */
+  let upsertRows = rows;
+  try {
+    const { data: readonlyEvents, error: readonlyErr } = await supabase
+      .from('events')
+      .select('eventid')
+      .eq('readonly', 1);
+    if (readonlyErr) {
+      console.warn('[GetEvents] Kunde inte läsa readonly-events:', readonlyErr.message);
+    } else if (Array.isArray(readonlyEvents) && readonlyEvents.length > 0) {
+      const skipEventIds = new Set(readonlyEvents.map((e) => e.eventid));
+      upsertRows = rows.filter((row) => !skipEventIds.has(row.eventid));
+      const skipped = rows.length - upsertRows.length;
+      if (skipped > 0) {
+        console.log(`[GetEvents] Skippar ${skipped} rader då deras eventid är readonly`);
+      }
+    }
+  } catch (e) {
+    console.warn('[GetEvents] Ovänterat fel vid läsning av readonly-events:', e.message);
+  }
+
+  // Upsert events – only rows not marked as readonly will be inserted/updated
   const { data: inserted, error: insertError } = await supabase
     .from('events')
-    .upsert(rows, { onConflict: 'eventraceid' })
+    .upsert(upsertRows, { onConflict: 'eventraceid' })
     .select();
 
   if (insertError) {
