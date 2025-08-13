@@ -146,7 +146,7 @@ async function fetchAndStoreEvents(organisationId, options = {}) {
   let totalInserted = 0;
   let totalErrors = 0;
 
-  // Funktion för att extrahera organisatörs-ID:n (flyttad utanför loop för prestanda)
+  // Funktion för att extrahera organisatörs-ID:n
   const getOrganiserIds = (event) => {
     let ids =
       (event?.Organiser?.[0]?.OrganisationId || [])
@@ -217,6 +217,7 @@ async function fetchAndStoreEvents(organisationId, options = {}) {
     }
 
     const events = Array.isArray(parsed?.EventList?.Event) ? parsed.EventList.Event : [];
+
     // Bygg rader för upsert per segment
     const segmentRows = events.flatMap((event) => {
       const eventid = parseInt(event.EventId?.[0]);
@@ -228,6 +229,10 @@ async function fetchAndStoreEvents(organisationId, options = {}) {
       const eventorganiser_ids = organiserIds.join(',');
       const eventclassificationid = parseInt(event.EventClassificationId?.[0]);
       const eventform = event.$?.eventForm || null;
+
+      // NYTT: DisciplineId
+      const disciplineid = event?.DisciplineId ? parseInt(event.DisciplineId[0]) : null;
+
       const races = Array.isArray(event.EventRace) ? event.EventRace : [event.EventRace];
       if (!races || !races[0]) return [];
       return races.map((race) => {
@@ -250,6 +255,7 @@ async function fetchAndStoreEvents(organisationId, options = {}) {
           eventclassificationid: Number.isFinite(eventclassificationid) ? eventclassificationid : null,
           eventdistance,
           eventform,
+          disciplineid: Number.isFinite(disciplineid) ? disciplineid : null, // <-- NY KOLUMN
           batchid: batchId,
         };
       });
