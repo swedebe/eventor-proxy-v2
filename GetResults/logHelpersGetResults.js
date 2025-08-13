@@ -211,10 +211,14 @@ async function logApiError(idOrMeta, statusOrError, message, requestUrl) {
   }
 
   if (idOrMeta) {
+    // === MINIMAL FIX 1: se till att errormessage aldrig blir tomt i update-fallet
+    if (!errorMessage) { errorMessage = (typeof statusOrError === "number") ? `HTTP ${statusOrError}` : "Unspecified error"; }
+
     const patch = {
       completed: now,
       responsecode: statusCode,
       errormessage: truncate(errorMessage),
+      level: "error",            // === MINIMAL FIX 2: markera nivån som error även vid update
       timestamp: now,
     };
     if (requestUrl) patch.request = requestUrl;
