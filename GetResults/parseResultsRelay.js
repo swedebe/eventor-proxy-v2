@@ -113,6 +113,7 @@ function getTeamPrimaryOrgId(teamResult) {
  *     b) TeamMemberResult.Organisation.OrganisationId === importingOrganisationId
  * - clubparticipation sätts till löparens klubb (OrganisationId på member-nivå).
  * - Om Event.eventForm === "RelaySingleDay" sätts classresultnumberofstarts till null (ignoreras).
+ * - Poäng beräknas ENDAST om resultcompetitorstatus === 'OK'.
  */
 function parseResultsRelay(xmlString, importingOrganisationId) {
   const parser = new XMLParser({
@@ -337,9 +338,10 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
             tmr.CompetitorStatus['@_value'] ?? tmr.CompetitorStatus.value ?? null;
         }
 
-        // points only when all needed values exist – men classStarts är null på RelaySingleDay → points blir null
+        // points only when all needed values exist AND status is 'OK'
         let points = null;
         if (
+          resultcompetitorstatus === 'OK' &&
           klassfaktor != null &&
           resultposition != null &&
           classStarts != null &&
