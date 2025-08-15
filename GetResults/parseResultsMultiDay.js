@@ -40,12 +40,8 @@ function toSeconds(value) {
 }
 
 /**
- * Map a class type identifier onto the so–called "klassfaktor".  The
- * underlying rules are derived from the historic implementation:
- *   - typeId 16 => 125
- *   - typeId 17 => 100
- *   - typeId 19 => 75
- *   - other/unknown => null
+ * Map a class type identifier onto the so–called "klassfaktor".
+ *   16 => 125, 17 => 100, 19 => 75; other => null
  *
  * @param {number|null} classTypeId
  * @returns {number|null}
@@ -58,18 +54,13 @@ function klassFaktorFromClassTypeId(classTypeId) {
 }
 
 /**
- * Parse a multi–day result XML document.  The returned object contains
- * two properties: `results` – an array of row objects – and `warnings`
- * – an array of strings with non–fatal parsing issues.  This parser
- * never throws; if the XML cannot be understood it returns an empty
- * results array alongside a warning.
+ * Parse a multi–day result XML document.
  *
  * @param {string} xmlString – raw XML string returned from Eventor
- * @param {number|string} eventId – numerical identifier for the event
- * @param {number|string} clubId – organisationId of the club performing the fetch
- * @param {number|string|null} batchId – identifier for the batch run
- * @param {string|null} eventDate – optional event date (YYYY‑MM‑DD) to
- *   calculate competitor ages if the XML lacks a start date
+ * @param {number|string} eventId
+ * @param {number|string} clubId
+ * @param {number|string|null} batchId
+ * @param {string|null} eventDate
  * @returns {{ results: Array<Object>, warnings: string[] }}
  */
 function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = null) {
@@ -84,8 +75,6 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
   const results = [];
   const warnings = [];
 
-  // Attempt to parse the XML.  Any exception is caught and converted
-  // into a warning rather than allowing the caller to crash.
   try {
     parsed = parser.parse(xmlString);
   } catch (err) {
@@ -94,16 +83,10 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
     return { results, warnings };
   }
 
-  // Locate the ResultList.  A UTF–8 BOM, namespace prefixes or
-  // unusual casing can change the exact key name of the root
-  // element.  First try the simple property access.  If it fails,
-  // fall back to searching all keys for one that ends with or
-  // contains "resultlist" (case insensitive).  If still not
-  // found, emit a warning and log the available keys.
+  // Locate ResultList robustly
   let resultList = parsed?.ResultList;
   if (!resultList) {
     const keys = Object.keys(parsed || {});
-    // Search for keys that include "resultlist" regardless of case
     for (const key of keys) {
       if (/resultlist$/i.test(key) || /resultlist/i.test(key)) {
         resultList = parsed[key];
@@ -119,31 +102,24 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
     }
   }
 
-  // Determine the event year.  Prefer the provided eventDate, then
-  // fall back to the StartDate in the XML.  If neither is available
-  // the personage field will be null and a warning will be emitted.
+  // Event year
   let eventYear = null;
   if (eventDate) {
     const match = /^\d{4}/.exec(eventDate);
-    if (match) {
-      eventYear = parseInt(match[0], 10);
-    }
+    if (match) eventYear = parseInt(match[0], 10);
   }
   if (!eventYear) {
     const dateStr = resultList?.Event?.StartDate?.Date;
     if (typeof dateStr === 'string') {
       const match = /^\d{4}/.exec(dateStr);
-      if (match) {
-        eventYear = parseInt(match[0], 10);
-      }
+      if (match) eventYear = parseInt(match[0], 10);
     }
   }
   if (!eventYear) {
     warnings.push('Kunde inte läsa eventår från <Event><StartDate><Date>. personage blir null.');
   }
 
-  // Normalise ClassResult into an array.  If no ClassResult exists
-  // nothing more can be done – simply return the empty results array.
+  // ClassResult array
   let classResults = [];
   if (resultList.ClassResult) {
     classResults = Array.isArray(resultList.ClassResult)
@@ -153,10 +129,10 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
 
   console.log(`[parseResultsMultiDay] Antal klasser: ${classResults.length}`);
 
-  // Iterate over each class
   for (const classResult of classResults) {
-    // Extract class name and type
     const eventClassName = classResult?.EventClass?.Name ?? null;
+
+    // ClassTypeId / klassfaktor
     let classTypeId = null;
     if (classResult?.EventClass?.ClassTypeId != null) {
       const parsedCt = parseInt(classResult.EventClass.ClassTypeId, 10);
@@ -164,7 +140,7 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
     }
     const klassfaktor = klassFaktorFromClassTypeId(classTypeId);
 
-    // Normalise PersonResult into an array
+    // PersonResult[]
     let personResults = [];
     if (classResult.PersonResult) {
       personResults = Array.isArray(classResult.PersonResult)
@@ -172,8 +148,7 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
         : [classResult.PersonResult];
     }
 
-    // Log a debug sample to aid troubleshooting.  This sample logs
-    // the first competitor’s first race result for the current class.
+    // Optional debug: sample values
     if (personResults.length > 0) {
       const samplePr = personResults[0];
       let sampleRaceArray = [];
@@ -197,40 +172,23 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
       }
     }
 
-    // Iterate over each competitor
     for (const pr of personResults) {
-      // Extract person identifier.  The XML parser may return the PersonId
-      // as a simple string/number or as an object (e.g. when attributes
-      // are present).  To robustly handle all cases we normalise the
-      // value into a number here.  If parsing fails the id is set to null.
+      // personid robust
       let personId = null;
       const personIdRaw = pr?.Person?.PersonId;
       if (typeof personIdRaw === 'string' || typeof personIdRaw === 'number') {
         const parsed = parseInt(personIdRaw, 10);
         personId = Number.isNaN(parsed) ? null : parsed;
       } else if (personIdRaw && typeof personIdRaw === 'object') {
-        // Some XML libraries wrap the element in an object with
-        // either a '#text' property or an '@_id' attribute.  Check
-        // both and parse whichever is present.
         if (personIdRaw['#text'] != null) {
           const parsed = parseInt(personIdRaw['#text'], 10);
-          if (!Number.isNaN(parsed)) {
-            personId = parsed;
-          }
+          if (!Number.isNaN(parsed)) personId = parsed;
         } else if (personIdRaw['@_id'] != null) {
           const parsed = parseInt(personIdRaw['@_id'], 10);
-          if (!Number.isNaN(parsed)) {
-            personId = parsed;
-          }
+          if (!Number.isNaN(parsed)) personId = parsed;
         }
       }
-      // Handle competitors without a valid personId.  Some XML documents contain
-      // <PersonId/> with no content which results in a null here.  The
-      // `results` table requires personid to be non-null, so we assign
-      // personId 0 and record a warning with enough information to identify
-      // the competitor manually.
       if (personId == null) {
-        // Compose a short identifier for logging
         const fam = pr?.Person?.PersonName?.Family ?? '<unknown>';
         const givenField = pr?.Person?.PersonName?.Given;
         let given;
@@ -247,7 +205,7 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
         personId = 0;
       }
 
-      // Extract birth year
+      // age
       let birthYear = null;
       const birthDateStr = pr?.Person?.BirthDate?.Date;
       if (typeof birthDateStr === 'string') {
@@ -257,28 +215,23 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
         }
       }
       const personage = birthYear != null && eventYear != null ? eventYear - birthYear : null;
-      // The competitor's organisation (club) identifier.  This is
-      // distinct from the `clubId` parameter which represents the
-      // organisation requesting the import.
+
+      // competitor org id
       const competitorOrgId = pr?.Organisation?.OrganisationId
         ? parseInt(pr.Organisation.OrganisationId, 10)
         : null;
 
-      // Normalise RaceResult into an array.  Each RaceResult corresponds
-      // to a single stage of the multi–day event.
+      // RaceResult[]
       let raceResults = [];
       if (pr.RaceResult) {
         raceResults = Array.isArray(pr.RaceResult) ? pr.RaceResult : [pr.RaceResult];
       }
 
       for (const rr of raceResults) {
-        // The EventRaceId tells us which stage this result belongs to.
         const eventRaceId = rr?.EventRaceId ? parseInt(rr.EventRaceId, 10) : null;
         if (!eventRaceId) continue;
 
-        // A RaceResult may contain multiple Result blocks.  Typically
-        // this would be a single Result per stage, but we normalise
-        // regardless.
+        // Result[]
         let resultBlocks = [];
         if (rr.Result) {
           resultBlocks = Array.isArray(rr.Result) ? rr.Result : [rr.Result];
@@ -289,6 +242,22 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
           const resultposition = r?.ResultPosition != null ? parseInt(r.ResultPosition, 10) : null;
           const resultcompetitorstatus = r?.CompetitorStatus?.['@_value'] ?? null;
 
+          // Points: ONLY when status is 'OK', and (for multi-day we normally set starts to null)
+          // Keep behaviour: classresultnumberofstarts is null for multi–day per spec.
+          let points = null;
+          const classresultnumberofstarts = null;
+
+          if (
+            resultcompetitorstatus === 'OK' &&
+            klassfaktor != null &&
+            resultposition != null &&
+            classresultnumberofstarts != null &&
+            classresultnumberofstarts > 0
+          ) {
+            const raw = klassfaktor * (1 - resultposition / classresultnumberofstarts);
+            points = Math.round(raw * 100) / 100;
+          }
+
           results.push({
             personid: personId,
             eventid: eventId != null ? parseInt(eventId, 10) : null,
@@ -298,10 +267,10 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
             resulttimediff,
             resultposition,
             resultcompetitorstatus,
-            classresultnumberofstarts: null, // multi–day XML contains an incorrect value – explicitly null
+            classresultnumberofstarts, // explicitly null on multi‑day
             classtypeid: classTypeId,
             klassfaktor,
-            points: null,
+            points,
             personage,
             clubparticipation: competitorOrgId,
             batchid: batchId
