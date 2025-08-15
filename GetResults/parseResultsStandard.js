@@ -190,8 +190,15 @@ function parseResultsStandard(xmlString) {
           const resultposition = toIntOrNull(r?.ResultPosition);
           const resultcompetitorstatus = r?.CompetitorStatus?.['@_value'] ?? null;
 
+          // Points: ONLY when status is exactly 'OK'
           let points = null;
-          if (klassfaktor != null && resultposition != null && classStarts != null && classStarts > 0) {
+          if (
+            resultcompetitorstatus === 'OK' &&
+            klassfaktor != null &&
+            resultposition != null &&
+            classStarts != null &&
+            classStarts > 0
+          ) {
             const raw = klassfaktor * (1 - resultposition / classStarts);
             points = Math.round(raw * 100) / 100;
           }
