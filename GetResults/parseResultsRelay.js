@@ -198,65 +198,37 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
         if (!Number.isNaN(cs)) classStarts = cs;
       }
     } else {
-      // För diagnos: hjälp oss se om XML faktiskt innehöll siffror som vi ignorerar.
-      const xmlStartsAttr = classResult['@_numberOfStarts'] ?? classResult?.ClassRaceInfo?.['@_noOfStarts'] ?? null;
-      if (xmlStartsAttr != null) {
-        warnings.push(
-          `Event ${eventId}: Ignorerar antal lag (numberOfStarts=${xmlStartsAttr}) eftersom eventForm=RelaySingleDay.`
-        );
-      }
+      classStarts = null;
     }
 
-    // eventraceid
-    let eventRaceId = null;
-    if (classResult?.ClassRaceInfo?.EventRaceId != null) {
-      const er = parseInt(classResult.ClassRaceInfo.EventRaceId, 10);
-      if (!Number.isNaN(er)) eventRaceId = er;
-    } else if (resultList?.Event?.EventRace?.EventRaceId != null) {
-      const er = parseInt(resultList.Event.EventRace.EventRaceId, 10);
-      if (!Number.isNaN(er)) eventRaceId = er;
-    }
-
-    // TeamResult array
+    // Each TeamResult is a team in the relay
     const teamResults = classResult?.TeamResult
       ? Array.isArray(classResult.TeamResult)
         ? classResult.TeamResult
         : [classResult.TeamResult]
       : [];
 
-    for (const tr of teamResults) {
-      // Team-level fields (apply per leg row)
-      const relayteamname = tr?.TeamName ?? null;
+    for (const teamResult of teamResults) {
+      const relayteamname = teamResult?.TeamName ?? null;
+      const relayteamendposition = toIntOrNull(teamResult?.ResultPosition);
+      const relayteamenddiff = toSecondsRelay(teamResult?.TimeBehind);
+      const relayteamendstatus = teamResult?.TeamStatus?.['@_value'] ?? null;
 
-      let relayteamendposition = null;
-      if (tr?.ResultPosition != null) {
-        const rp = parseInt(tr.ResultPosition, 10);
-        if (!Number.isNaN(rp)) relayteamendposition = rp;
-      }
+      // primary organisation for this team (for diagnostics)
+      const teamPrimaryOrgId = getTeamPrimaryOrgId(teamResult);
 
-      let relayteamenddiff = null; // to seconds
-      if (tr?.TimeDiff != null) {
-        relayteamenddiff = toSecondsRelay(tr.TimeDiff);
-      }
+      const teamRaceIdRaw = teamResult?.EventRaceId ?? teamResult?.RaceId ?? null;
+      const eventRaceId = toIntOrNull(teamRaceIdRaw);
 
-      let relayteamendstatus = null;
-      if (tr?.TeamStatus) {
-        relayteamendstatus =
-          tr.TeamStatus['@_value'] ?? tr.TeamStatus.value ?? null;
-      }
-
-      // Primär lagklubb (för varningar) – men filtret sker mot importingOrganisationId
-      const teamPrimaryOrgId = getTeamPrimaryOrgId(tr);
-
-      // Members per team → one DB row per member
-      const memberResults = tr?.TeamMemberResult
-        ? Array.isArray(tr.TeamMemberResult)
-          ? tr.TeamMemberResult
-          : [tr.TeamMemberResult]
+      // Each TeamMemberResult is a leg/competitor
+      const memberResults = teamResult?.TeamMemberResult
+        ? Array.isArray(teamResult.TeamMemberResult)
+          ? teamResult.TeamMemberResult
+          : [teamResult.TeamMemberResult]
         : [];
 
       for (const tmr of memberResults) {
-        // Skip 1: vacant?
+        // Skip 1: "vacant" placeholders
         const given1 = (getGivenSeq1(tmr?.Person) || '').trim().toLowerCase();
         if (given1 === 'vacant') {
           const name = getPersonName(tmr?.Person || {});
@@ -351,6 +323,11 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
           points = Math.round(raw * 100) / 100;
         }
 
+        // Extract person family and given names for downstream diagnostics
+        const personFamilyName = tmr?.Person?.PersonName?.Family ?? null;
+        // Use helper getGivenSeq1 to robustly extract the given name with sequence="1"
+        const personGivenName = getGivenSeq1(tmr?.Person) ?? null;
+
         results.push({
           // core identity
           personid: personId,
@@ -380,6 +357,10 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
 
           // person
           personage,
+
+          // include names for better warnings in fetcher; these fields are not persisted to DB
+          persongiven: personGivenName,
+          personfamily: personFamilyName,
 
           // behåll löparens klubb (ska inte skrivas över i fetchern)
           clubparticipation: competitorOrgId ?? null
