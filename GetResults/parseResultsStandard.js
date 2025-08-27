@@ -66,6 +66,39 @@ function readClassStarts(classResult) {
   return null;
 }
 
+/** Robustly extract Given name (sequence="1" if available) from PersonName.Given. */
+function getGiven(person) {
+  const given = person?.PersonName?.Given;
+  if (!given) return null;
+
+  if (typeof given === 'string') return given?.trim() || null;
+
+  if (Array.isArray(given)) {
+    // Prefer an object with sequence="1"
+    const seq1 = given.find(
+      (g) => typeof g === 'object' && (g['@_sequence'] === '1' || g['@_sequence'] == null)
+    );
+    if (seq1) return (seq1['#text'] || '').trim() || null;
+
+    // Otherwise join all string-like parts
+    const joined = given
+      .map((g) => (typeof g === 'string' ? g : (g?.['#text'] || '')))
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    return joined || null;
+  }
+
+  if (typeof given === 'object') {
+    if (!given['@_sequence'] || given['@_sequence'] === '1') {
+      return (given['#text'] || '').trim() || null;
+    }
+    return (given['#text'] || '').trim() || null;
+  }
+
+  return null;
+}
+
 /**
  * Parse standard single-day results.
  * @param {string} xmlString
@@ -126,6 +159,10 @@ function parseResultsStandard(xmlString) {
 
     const personResults = arrayify(classResult.PersonResult);
     for (const pr of personResults) {
+      // Read names robustly for warnings and downstream diagnostics
+      const personFamilyName = pr?.Person?.PersonName?.Family ?? null;
+      const personGivenName = getGiven(pr?.Person) ?? null;
+
       // personid robustly
       let personId = null;
       const personIdRaw = pr?.Person?.PersonId;
@@ -142,9 +179,9 @@ function parseResultsStandard(xmlString) {
         }
       }
       if (personId == null) {
-        const fam = pr?.Person?.PersonName?.Family ?? '<unknown>';
-        const given = pr?.Person?.PersonName?.Given ?? '';
-        warnings.push(`PersonId saknas för ${fam} ${given} – har satt personid=0`);
+        const fam = personFamilyName ?? '<unknown>';
+        const given = personGivenName ?? '';
+        warnings.push(`PersonId saknas för ${fam} ${given}`.trim() + ' – har satt personid=0');
         personId = 0;
       }
 
@@ -155,7 +192,7 @@ function parseResultsStandard(xmlString) {
         const m = /^\s*(\d{4})/.exec(birthDateStr);
         if (m && eventYear != null) {
           const by = parseInt(m[1], 10);
-          if (!Number.isNaN(by)) personage = eventYear - by;
+          if (!Number.isNaN(by)) personage = by != null && eventYear != null ? eventYear - by : null;
         }
       }
       if (personage == null && pr?.Person?.Age != null) {
@@ -218,7 +255,11 @@ function parseResultsStandard(xmlString) {
             points,
             personage,
             clubparticipation: competitorOrgId,
-            batchid: null      // set in GetResultsFetcher
+            batchid: null,     // set in GetResultsFetcher
+
+            // Transient fields to improve downstream warnings in fetcher (not persisted)
+            persongiven: personGivenName ?? null,
+            personfamily: personFamilyName ?? null,
           });
         }
       }
