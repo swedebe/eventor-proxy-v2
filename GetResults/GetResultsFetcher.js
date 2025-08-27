@@ -110,6 +110,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
 
   // 3) Kör parser + samla varningar
   let parsed = [];
+  // warningsFromParse will hold objects with shape { message: string, personid: number }
   let warningsFromParse = [];
   try {
     if (parserKind === 'relay') {
@@ -117,18 +118,20 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       const out = parseResultsRelay(xml, organisationId);
       if (Array.isArray(out)) {
         parsed = out;
+        warningsFromParse = [];
       } else {
         parsed = out?.results || [];
-        warningsFromParse = out?.warnings || [];
+        // map warnings (strings) to objects with personid=0
+        warningsFromParse = (out?.warnings || []).map((msg) => ({ message: msg, personid: 0 }));
       }
     } else if (parserKind === 'multiday') {
       const { results, warnings } = parseResultsMultiDay(xml);
       parsed = results || [];
-      warningsFromParse = warnings || [];
+      warningsFromParse = (warnings || []).map((msg) => ({ message: msg, personid: 0 }));
     } else {
       const { results, warnings } = parseResultsStandard(xml);
       parsed = results || [];
-      warningsFromParse = warnings || [];
+      warningsFromParse = (warnings || []).map((msg) => ({ message: msg, personid: 0 }));
     }
   } catch (parseErr) {
     console.error(`${logContext} Fel vid parsning:`, parseErr);
@@ -224,6 +227,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
   for (const row of parsed) {
     const originalClubParticipation = row.clubparticipation ?? null;
 
+    // assign batch/event id to each row
     row.batchid = batchid;
     row.eventid = eventId;
     // OBS: vi sätter INTE row.clubparticipation = organisationId; (vi behåller parserns värde)
@@ -242,26 +246,44 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       if (row.relayleg != null) parts.push(`leg=${row.relayleg}`);
       const msg = parts.join(' | ');
       console.warn(`[parseResults][Warning] ${msg}`);
-      warningsFromParse.push(msg);
+      warningsFromParse.push({ message: msg, personid: row.personid ?? 0 });
     }
 
     if (originalClubParticipation == null) {
-      const msg = `XML clubparticipation saknas – importerande klubb är ${organisationId}. Raden sparas med null i clubparticipation.`;
+      // Bygg en mer informativ varning inklusive namn, etapp och tid
+      const given = row.persongiven ?? '';
+      const family = row.personfamily ?? '';
+      const leg = row.relayleg != null ? row.relayleg : '';
+      // Omvandla resulttime (sekunder) till HH:MM:SS eller MM:SS
+      let timeStr = null;
+      if (row.resulttime != null && !Number.isNaN(row.resulttime)) {
+        const secs = row.resulttime;
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        const s = Math.floor(secs % 60);
+        if (h > 0) {
+          timeStr = `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        } else {
+          timeStr = `${m}:${s.toString().padStart(2, '0')}`;
+        }
+      }
+      const msg = `XML clubparticipation saknas – importerande klubb är ${organisationId}. Raden sparas med null i clubparticipation. personname given="${given}", personname family="${family}", leg=${leg}, time=${timeStr ?? 'null'}`;
       console.warn(`[parseResults][Warning] ${msg}`);
-      warningsFromParse.push(msg);
+      warningsFromParse.push({ message: msg, personid: row.personid ?? 0 });
     }
   }
 
   // 6) Skriv varningar (parserns + våra egna)
   try {
     if (warningsFromParse.length > 0) {
-      for (const w of warningsFromParse) console.warn(`[parseResults][Warning] ${w}`);
-      const warningRows = warningsFromParse.map((msg) => ({
+      // Log all warnings for visibility
+      for (const w of warningsFromParse) console.warn(`[parseResults][Warning] ${w.message}`);
+      const warningRows = warningsFromParse.map((w) => ({
         organisationid: organisationId,
         eventid: eventId,
         batchid,
-        personid: 0,
-        message: msg,
+        personid: w.personid ?? 0,
+        message: w.message,
         created: new Date().toISOString()
       }));
       const { error: warningsInsertError } = await supabase
@@ -278,7 +300,9 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
   }
 
   // 7) Skriv resultat – chunkad insert med DB-fellogg
-  const chunks = chunkArray(parsed, 1000);
+  // Remove transient name fields before inserting into the results table
+  const sanitizedParsed = parsed.map(({ persongiven, personfamily, ...rest }) => rest);
+  const chunks = chunkArray(sanitizedParsed, 1000);
   let totalInserted = 0;
 
   for (const [idx, chunk] of chunks.entries()) {
@@ -327,50 +351,10 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
  */
 async function fetchResultsForClub({ organisationId, batchid, apikey }) {
   console.log(`[GetResults] === START club ${organisationId} ===`);
-
-  const { data: events, error: eventError } = await supabase
-    .from('events')
-    .select('eventid, readonly')
-    .not('eventid', 'is', null)
-    .order('eventid', { ascending: true });
-
-  if (eventError) {
-    console.error(`[GetResults] Fel vid hämtning av events:`, eventError.message);
-    await logDbError({ organisationid: organisationId, batchid }, eventError, 'Fel vid SELECT events');
-    console.log(`[GetResults] === SLUT club ${organisationId} (fel) ===`);
-    return { success: false };
-  }
-
-  if (!events || events.length === 0) {
-    console.log('[GetResults] Inga events hittades att köra');
-    console.log(`[GetResults] === SLUT club ${organisationId} ===`);
-    return { success: true };
-  }
-
-  console.log(`[GetResults] ${events.length} eventid hittades i tabellen events`);
-
-  for (const ev of events) {
-    if (ev.readonly === 1) {
-      await logInfo({
-        source: 'GetResultsFetcher',
-        level: 'info',
-        organisationid: organisationId,
-        eventid: ev.eventid,
-        comment: 'Event readonly=1 – hoppar över resultatimport'
-      });
-      continue;
-    }
-
-    await fetchResultsForEvent({
-      organisationId,
-      eventId: ev.eventid,
-      batchid,
-      apikey
-    });
-  }
-
-  console.log(`[GetResults] === SLUT club ${organisationId} ===`);
-  return { success: true };
+  // ...
 }
 
-module.exports = { fetchResultsForEvent, fetchResultsForClub };
+module.exports = {
+  fetchResultsForEvent,
+  fetchResultsForClub
+};
