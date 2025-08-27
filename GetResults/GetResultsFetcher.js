@@ -12,11 +12,11 @@ const parseResultsMultiDay = require('./parseResultsMultiDay.js');
 const parseResultsRelay = require('./parseResultsRelay.js');
 
 const {
-  insertLogData,     // används för infolistor etc.
-  logApiStart,       // ny: start av API-anrop
-  logApiEnd,         // ny: slut på API-anrop (sätter completed + responsecode)
-  logApiError,       // ny: fel vid API-anrop (sätter completed + responsecode + errormessage)
-  logDbError,        // ny: DB-fel (responsecode='DB_ERROR')
+  insertLogData,
+  logApiStart,
+  logApiEnd,
+  logApiError,
+  logDbError,
   logInfo,
   logWarn,
   logDebug
@@ -26,7 +26,10 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // Bekräftelse i logg (kort) att vi har en nyckel – bra vid felsökning i Render (trunkerad)
-console.log('[GetResultsFetcher] SUPABASE_SERVICE_ROLE_KEY prefix:', SUPABASE_SERVICE_ROLE_KEY?.substring(0, 8) || '<saknas>');
+console.log(
+  '[GetResultsFetcher] SUPABASE_SERVICE_ROLE_KEY prefix:',
+  SUPABASE_SERVICE_ROLE_KEY?.substring(0, 8) || '<saknas>'
+);
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -84,8 +87,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
 
   try {
     response = await fetch(url, {
-      headers: { Accept: 'application/xml', ApiKey: apikey },
-      // node-fetch v2 har inte native timeout; i Render är nätet stabilt men vi låter det vara utan custom-abort.
+      headers: { Accept: 'application/xml', ApiKey: apikey }
     });
     xml = await response.text();
   } catch (netErr) {
@@ -96,7 +98,10 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
 
   if (!response?.ok) {
     // Logga error med status och kort body-snutt
-    console.error(`${logContext} Eventor-svar ej OK (${response.status}). Förhandsinnehåll:`, xml?.slice(0, 500) || '<tomt>');
+    console.error(
+      `${logContext} Eventor-svar ej OK (${response.status}). Förhandsinnehåll:`,
+      xml?.slice(0, 500) || '<tomt>'
+    );
     await logApiError(logId, response.status, undefined, url); // sätter completed + responsecode
     return { success: false };
   }
@@ -122,7 +127,10 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       } else {
         parsed = out?.results || [];
         // map warnings (strings) to objects with personid=0
-        warningsFromParse = (out?.warnings || []).map((msg) => ({ message: msg, personid: 0 }));
+        warningsFromParse = (out?.warnings || []).map((msg) => ({
+          message: msg,
+          personid: 0
+        }));
       }
     } else if (parserKind === 'multiday') {
       const { results, warnings } = parseResultsMultiDay(xml);
@@ -149,7 +157,6 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
 
   if (!parsed || parsed.length === 0) {
     console.log(`${logContext} 0 resultat tolkades från XML`);
-    // Ingen data är inte fel – men vi loggar en info-rad så det syns i din UI
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'info',
@@ -171,8 +178,15 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       .eq('readonly', 1);
 
     if (readonlyRowsErr) {
-      console.warn(`${logContext} Kunde inte läsa readonly-resultatrader:`, readonlyRowsErr.message);
-      await logDbError({ organisationid: organisationId, eventid: eventId, batchid }, readonlyRowsErr, 'Fel vid SELECT readonly i results');
+      console.warn(
+        `${logContext} Kunde inte läsa readonly-resultatrader:`,
+        readonlyRowsErr.message
+      );
+      await logDbError(
+        { organisationid: organisationId, eventid: eventId, batchid },
+        readonlyRowsErr,
+        'Fel vid SELECT readonly i results'
+      );
     } else if (Array.isArray(readonlyRows) && readonlyRows.length > 0) {
       const skipSet = new Set(
         readonlyRows.map((r) => `${r.personid}|${r.eventraceid}|${r.relayleg ?? ''}`)
@@ -184,7 +198,9 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       });
       const filteredOut = before - parsed.length;
       if (filteredOut > 0) {
-        console.log(`${logContext} Skippar ${filteredOut} resultat från XML p.g.a. readonly-krock`);
+        console.log(
+          `${logContext} Skippar ${filteredOut} resultat från XML p.g.a. readonly-krock`
+        );
         await insertLogData(supabase, {
           source: 'GetResultsFetcher',
           level: 'info',
@@ -196,8 +212,15 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       }
     }
   } catch (e) {
-    console.warn(`${logContext} Ovänterat fel vid filtrering av readonly-resultat:`, e.message);
-    await logDbError({ organisationid: organisationId, eventid: eventId, batchid }, e, 'Ov. fel vid readonly-filter');
+    console.warn(
+      `${logContext} Ovänterat fel vid filtrering av readonly-resultat:`,
+      e.message
+    );
+    await logDbError(
+      { organisationid: organisationId, eventid: eventId, batchid },
+      e,
+      'Ov. fel vid readonly-filter'
+    );
   }
 
   console.log(`${logContext} ${parsed.length} resultat efter readonly-filtrering`);
@@ -213,14 +236,21 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
 
     if (delErr) {
       console.error(`${logContext} Fel vid delete av tidigare rader:`, delErr.message);
-      await logDbError({ organisationid: organisationId, eventid: eventId, batchid }, delErr, 'Fel vid DELETE results');
-      // Vi fortsätter försöka skriva nya rader ändå – delete-fel ska inte dölja importfelet i loggarna
+      await logDbError(
+        { organisationid: organisationId, eventid: eventId, batchid },
+        delErr,
+        'Fel vid DELETE results'
+      );
     } else {
       console.log(`${logContext} Tidigare rader rensade (readonly rader sparade)`);
     }
   } catch (e) {
     console.error(`${logContext} Ovänterat fel vid delete:`, e);
-    await logDbError({ organisationid: organisationId, eventid: eventId, batchid }, e, 'Ov. fel vid DELETE results');
+    await logDbError(
+      { organisationid: organisationId, eventid: eventId, batchid },
+      e,
+      'Ov. fel vid DELETE results'
+    );
   }
 
   // 5) Batch‑metadata på raderna + varningar om klubbsiffra
@@ -262,7 +292,9 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         const m = Math.floor((secs % 3600) / 60);
         const s = Math.floor(secs % 60);
         if (h > 0) {
-          timeStr = `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+          timeStr = `${h}:${m.toString().padStart(2, '0')}:${s
+            .toString()
+            .padStart(2, '0')}`;
         } else {
           timeStr = `${m}:${s.toString().padStart(2, '0')}`;
         }
@@ -277,7 +309,8 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
   try {
     if (warningsFromParse.length > 0) {
       // Log all warnings for visibility
-      for (const w of warningsFromParse) console.warn(`[parseResults][Warning] ${w.message}`);
+      for (const w of warningsFromParse)
+        console.warn(`[parseResults][Warning] ${w.message}`);
       const warningRows = warningsFromParse.map((w) => ({
         organisationid: organisationId,
         eventid: eventId,
@@ -290,13 +323,24 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         .from('warnings')
         .insert(warningRows);
       if (warningsInsertError) {
-        console.error(`${logContext} Fel vid insert av warnings:`, warningsInsertError.message);
-        await logDbError({ organisationid: organisationId, eventid: eventId, batchid }, warningsInsertError, 'Fel vid INSERT warnings');
+        console.error(
+          `${logContext} Fel vid insert av warnings:`,
+          warningsInsertError.message
+        );
+        await logDbError(
+          { organisationid: organisationId, eventid: eventId, batchid },
+          warningsInsertError,
+          'Fel vid INSERT warnings'
+        );
       }
     }
   } catch (wErr) {
     console.error(`${logContext} Ovänterat fel vid hantering av warnings:`, wErr);
-    await logDbError({ organisationid: organisationId, eventid: eventId, batchid }, wErr, 'Ov. fel vid warnings');
+    await logDbError(
+      { organisationid: organisationId, eventid: eventId, batchid },
+      wErr,
+      'Ov. fel vid warnings'
+    );
   }
 
   // 7) Skriv resultat – chunkad insert med DB-fellogg
@@ -319,7 +363,11 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         eventid: eventId,
         batchid
       });
-      await logDbError({ organisationid: organisationId, eventid: eventId, batchid }, error, `Insert chunk ${idx + 1}/${chunks.length}`);
+      await logDbError(
+        { organisationid: organisationId, eventid: eventId, batchid },
+        error,
+        `Insert chunk ${idx + 1}/${chunks.length}`
+      );
       // fortsätt med nästa chunk – vi vill se alla fel
       continue;
     }
@@ -351,7 +399,54 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
  */
 async function fetchResultsForClub({ organisationId, batchid, apikey }) {
   console.log(`[GetResults] === START club ${organisationId} ===`);
-  // ...
+
+  const { data: events, error: eventError } = await supabase
+    .from('events')
+    .select('eventid, readonly')
+    .not('eventid', 'is', null)
+    .order('eventid', { ascending: true });
+
+  if (eventError) {
+    console.error(`[GetResults] Fel vid hämtning av events:`, eventError.message);
+    await logDbError(
+      { organisationid: organisationId, batchid },
+      eventError,
+      'Fel vid SELECT events'
+    );
+    console.log(`[GetResults] === SLUT club ${organisationId} (fel) ===`);
+    return { success: false };
+  }
+
+  if (!events || events.length === 0) {
+    console.log('[GetResults] Inga events hittades att köra');
+    console.log(`[GetResults] === SLUT club ${organisationId} ===`);
+    return { success: true };
+  }
+
+  console.log(`[GetResults] ${events.length} eventid hittades i tabellen events`);
+
+  for (const ev of events) {
+    if (ev.readonly === 1) {
+      await logInfo({
+        source: 'GetResultsFetcher',
+        level: 'info',
+        organisationid: organisationId,
+        eventid: ev.eventid,
+        comment: 'Event readonly=1 – hoppar över resultatimport'
+      });
+      continue;
+    }
+
+    await fetchResultsForEvent({
+      organisationId,
+      eventId: ev.eventid,
+      batchid,
+      apikey
+    });
+  }
+
+  console.log(`[GetResults] === SLUT club ${organisationId} ===`);
+  return { success: true };
 }
 
 module.exports = {
