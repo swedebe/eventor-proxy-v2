@@ -1,51 +1,33 @@
-// parseResultsMultiDay.js
+// parseResultsStandard.js
 //
-// Parser for multi–day (IndMultiDay) events returned from Eventor. A multi–day
-// event contains one or more stages (EventRace) and produces a separate
-// PersonResult entry for each stage.  The goal of this parser is to
-// normalise the XML structure into a flat list of result rows suitable
-// for insertion into the `results` table.  Each row represents a single
-// competitor on a single stage.  Fields are mapped according to the
-// specification provided in the project description.  Where data is
-// missing or cannot be calculated, the parser fills values with `null`.
+// Parser for standard (single-day) Eventor results. Produces flat rows for the
+// `results` table. Strict rule (per user spec): ClassTypeId MUST come from
+// <ClassTypeId> in the XML; klassfaktor is derived ONLY from that numeric id:
+//   16 → 125, 17 → 100, 19 → 75; otherwise null.
+// No heuristics based on class names are used.
 
 const { XMLParser } = require('fast-xml-parser');
 
-/**
- * Convert a time string in the format HH:MM:SS or MM:SS into seconds.  If
- * the input is not recognised the function returns `null`.
- *
- * @param {string|number|undefined|null} value
- * @returns {number|null}
- */
 function toSeconds(value) {
-  if (typeof value === 'number') {
-    return value;
-  }
-  if (typeof value !== 'string') {
-    return null;
-  }
+  if (typeof value === 'number') return value;
+  if (typeof value !== 'string') return null;
   const parts = value.trim().split(':').map((v) => parseInt(v, 10));
-  if (parts.some((v) => Number.isNaN(v))) {
-    return null;
-  }
-  // Two parts means MM:SS, three parts means HH:MM:SS
-  if (parts.length === 2) {
-    return parts[0] * 60 + parts[1];
-  }
-  if (parts.length === 3) {
-    return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  }
+  if (parts.some((v) => Number.isNaN(v))) return null;
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   return null;
 }
 
-/**
- * Map a class type identifier onto the so–called "klassfaktor".
- *   16 => 125, 17 => 100, 19 => 75; other => null
- *
- * @param {number|null} classTypeId
- * @returns {number|null}
- */
+function toIntOrNull(v) {
+  const n = parseInt(v, 10);
+  return Number.isNaN(n) ? null : n;
+}
+
+function arrayify(x) {
+  if (x == null) return [];
+  return Array.isArray(x) ? x : [x];
+}
+
 function klassFaktorFromClassTypeId(classTypeId) {
   if (classTypeId === 16) return 125;
   if (classTypeId === 17) return 100;
@@ -53,17 +35,76 @@ function klassFaktorFromClassTypeId(classTypeId) {
   return null;
 }
 
+function readEventYear(resultList) {
+  const dateStr = resultList?.Event?.StartDate?.Date;
+  if (typeof dateStr === 'string') {
+    const m = /^\s*(\d{4})/.exec(dateStr);
+    if (m) {
+      const yr = parseInt(m[1], 10);
+      if (!Number.isNaN(yr)) return yr;
+    }
+  }
+  return null;
+}
+
+/** Robust extraction of number of starts for a class. */
+function readClassStarts(classResult) {
+  // Primary: attribute on ClassResult
+  if (classResult?.['@_numberOfStarts'] != null) {
+    const v = parseInt(classResult['@_numberOfStarts'], 10);
+    if (!Number.isNaN(v)) return v;
+  }
+  // Fallbacks commonly seen in Eventor exports
+  if (classResult?.EventClass?.ClassRaceInfo?.['@_noOfStarts'] != null) {
+    const v = parseInt(classResult.EventClass.ClassRaceInfo['@_noOfStarts'], 10);
+    if (!Number.isNaN(v)) return v;
+  }
+  if (classResult?.ClassRaceInfo?.['@_noOfStarts'] != null) {
+    const v = parseInt(classResult.ClassRaceInfo['@_noOfStarts'], 10);
+    if (!Number.isNaN(v)) return v;
+  }
+  return null;
+}
+
+/** Robustly extract Given name (sequence="1" if available) from PersonName.Given. */
+function getGiven(person) {
+  const given = person?.PersonName?.Given;
+  if (!given) return null;
+
+  if (typeof given === 'string') return given?.trim() || null;
+
+  if (Array.isArray(given)) {
+    // Prefer an object with sequence="1"
+    const seq1 = given.find(
+      (g) => typeof g === 'object' && (g['@_sequence'] === '1' || g['@_sequence'] == null)
+    );
+    if (seq1) return (seq1['#text'] || '').trim() || null;
+
+    // Otherwise join all string-like parts
+    const joined = given
+      .map((g) => (typeof g === 'string' ? g : (g?.['#text'] || '')))
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    return joined || null;
+  }
+
+  if (typeof given === 'object') {
+    if (!given['@_sequence'] || given['@_sequence'] === '1') {
+      return (given['#text'] || '').trim() || null;
+    }
+    return (given['#text'] || '').trim() || null;
+  }
+
+  return null;
+}
+
 /**
- * Parse a multi–day result XML document.
- *
- * @param {string} xmlString – raw XML string returned from Eventor
- * @param {number|string} eventId
- * @param {number|string} clubId
- * @param {number|string|null} batchId
- * @param {string|null} eventDate
- * @returns {{ results: Array<Object>, warnings: string[] }}
+ * Parse standard single-day results.
+ * @param {string} xmlString
+ * @returns {{results: Array<Object>, warnings: string[]}}
  */
-function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = null) {
+function parseResultsStandard(xmlString) {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
@@ -71,217 +112,174 @@ function parseResultsMultiDay(xmlString, eventId, clubId, batchId, eventDate = n
     trimValues: true
   });
 
-  let parsed;
   const results = [];
   const warnings = [];
+  let parsed;
 
   try {
     parsed = parser.parse(xmlString);
   } catch (err) {
-    console.warn(`[parseResultsMultiDay] XML parse error: ${err.message}`);
     warnings.push(`XML parse error: ${err.message}`);
     return { results, warnings };
   }
 
-  // Locate ResultList robustly
-  let resultList = parsed?.ResultList;
+  const resultList = parsed?.ResultList;
   if (!resultList) {
-    const keys = Object.keys(parsed || {});
-    for (const key of keys) {
-      if (/resultlist$/i.test(key) || /resultlist/i.test(key)) {
-        resultList = parsed[key];
-        break;
-      }
-    }
-    if (!resultList) {
-      console.warn(
-        `[parseResultsMultiDay] Kunde inte hitta ResultList. Tillgängliga root-nycklar: ${keys.join(', ')}`
-      );
-      warnings.push('ResultList saknas i XML');
-      return { results, warnings };
-    }
+    warnings.push('ResultList saknas i XML');
+    return { results, warnings };
   }
 
-  // Event year
-  let eventYear = null;
-  if (eventDate) {
-    const match = /^\d{4}/.exec(eventDate);
-    if (match) eventYear = parseInt(match[0], 10);
-  }
-  if (!eventYear) {
-    const dateStr = resultList?.Event?.StartDate?.Date;
-    if (typeof dateStr === 'string') {
-      const match = /^\d{4}/.exec(dateStr);
-      if (match) eventYear = parseInt(match[0], 10);
-    }
-  }
-  if (!eventYear) {
+  const eventYear = readEventYear(resultList);
+  if (eventYear == null) {
     warnings.push('Kunde inte läsa eventår från <Event><StartDate><Date>. personage blir null.');
   }
 
-  // ClassResult array
-  let classResults = [];
-  if (resultList.ClassResult) {
-    classResults = Array.isArray(resultList.ClassResult)
-      ? resultList.ClassResult
-      : [resultList.ClassResult];
-  }
-
-  console.log(`[parseResultsMultiDay] Antal klasser: ${classResults.length}`);
-
+  const classResults = arrayify(resultList.ClassResult);
   for (const classResult of classResults) {
     const eventClassName = classResult?.EventClass?.Name ?? null;
 
-    // ClassTypeId / klassfaktor
+    // ClassTypeId must be read from XML numerically
     let classTypeId = null;
     if (classResult?.EventClass?.ClassTypeId != null) {
-      const parsedCt = parseInt(classResult.EventClass.ClassTypeId, 10);
-      classTypeId = Number.isNaN(parsedCt) ? null : parsedCt;
+      const ct = parseInt(classResult.EventClass.ClassTypeId, 10);
+      classTypeId = Number.isNaN(ct) ? null : ct;
     }
     const klassfaktor = klassFaktorFromClassTypeId(classTypeId);
 
-    // PersonResult[]
-    let personResults = [];
-    if (classResult.PersonResult) {
-      personResults = Array.isArray(classResult.PersonResult)
-        ? classResult.PersonResult
-        : [classResult.PersonResult];
+    // Starts for the class (for points)
+    const classStarts = readClassStarts(classResult);
+
+    // We try to get a race id for the class (typical single-day location)
+    let classEventRaceId = null;
+    if (classResult?.EventClass?.ClassRaceInfo?.EventRaceId != null &&
+        classResult.EventClass.ClassRaceInfo.EventRaceId !== '') {
+      const r = parseInt(classResult.EventClass.ClassRaceInfo.EventRaceId, 10);
+      classEventRaceId = Number.isNaN(r) ? null : r;
     }
 
-    // Optional debug: sample values
-    if (personResults.length > 0) {
-      const samplePr = personResults[0];
-      let sampleRaceArray = [];
-      if (samplePr.RaceResult) {
-        sampleRaceArray = Array.isArray(samplePr.RaceResult)
-          ? samplePr.RaceResult
-          : [samplePr.RaceResult];
-      }
-      if (sampleRaceArray.length > 0) {
-        const sampleRr = sampleRaceArray[0];
-        let sampleResultArray = [];
-        if (sampleRr?.Result) {
-          sampleResultArray = Array.isArray(sampleRr.Result)
-            ? sampleRr.Result
-            : [sampleRr.Result];
-        }
-        const s = sampleResultArray[0] || {};
-        console.log(
-          `[DEBUG Klass=${eventClassName}] Exempel: Time=${s?.Time}, TimeDiff=${s?.TimeDiff}, Pos=${s?.ResultPosition}, Status=${s?.CompetitorStatus?.['@_value']}`
-        );
-      }
-    }
-
+    const personResults = arrayify(classResult.PersonResult);
     for (const pr of personResults) {
-      // personid robust
+      // Read names robustly for warnings and downstream diagnostics
+      const personFamilyName = pr?.Person?.PersonName?.Family ?? null;
+      const personGivenName = getGiven(pr?.Person) ?? null;
+
+      // personid robustly
       let personId = null;
       const personIdRaw = pr?.Person?.PersonId;
       if (typeof personIdRaw === 'string' || typeof personIdRaw === 'number') {
-        const parsed = parseInt(personIdRaw, 10);
-        personId = Number.isNaN(parsed) ? null : parsed;
+        const p = parseInt(personIdRaw, 10);
+        personId = Number.isNaN(p) ? null : p;
       } else if (personIdRaw && typeof personIdRaw === 'object') {
         if (personIdRaw['#text'] != null) {
-          const parsed = parseInt(personIdRaw['#text'], 10);
-          if (!Number.isNaN(parsed)) personId = parsed;
+          const p = parseInt(personIdRaw['#text'], 10);
+          if (!Number.isNaN(p)) personId = p;
         } else if (personIdRaw['@_id'] != null) {
-          const parsed = parseInt(personIdRaw['@_id'], 10);
-          if (!Number.isNaN(parsed)) personId = parsed;
+          const p = parseInt(personIdRaw['@_id'], 10);
+          if (!Number.isNaN(p)) personId = p;
         }
       }
       if (personId == null) {
-        const fam = pr?.Person?.PersonName?.Family ?? '<unknown>';
-        const givenField = pr?.Person?.PersonName?.Given;
-        let given;
-        if (typeof givenField === 'string') {
-          given = givenField;
-        } else if (Array.isArray(givenField)) {
-          given = givenField
-            .map((g) => (typeof g === 'string' ? g : g?.['#text'] || ''))
-            .join(' ');
-        } else {
-          given = '';
-        }
-        warnings.push(`PersonId saknas för ${fam} ${given} – har satt personid=0`);
+        const fam = personFamilyName ?? '<unknown>';
+        const given = personGivenName ?? '';
+        warnings.push(`PersonId saknas för ${fam} ${given}`.trim() + ' – har satt personid=0');
         personId = 0;
       }
 
-      // age
-      let birthYear = null;
+      // Age
+      let personage = null;
       const birthDateStr = pr?.Person?.BirthDate?.Date;
       if (typeof birthDateStr === 'string') {
-        const match = /^\d{4}/.exec(birthDateStr);
-        if (match) {
-          birthYear = parseInt(match[0], 10);
+        const m = /^\s*(\d{4})/.exec(birthDateStr);
+        if (m && eventYear != null) {
+          const by = parseInt(m[1], 10);
+          if (!Number.isNaN(by)) personage = by != null && eventYear != null ? eventYear - by : null;
         }
       }
-      const personage = birthYear != null && eventYear != null ? eventYear - birthYear : null;
+      if (personage == null && pr?.Person?.Age != null) {
+        const a = parseInt(pr.Person.Age, 10);
+        if (!Number.isNaN(a)) personage = a;
+      }
 
-      // competitor org id
-      const competitorOrgId = pr?.Organisation?.OrganisationId
-        ? parseInt(pr.Organisation.OrganisationId, 10)
+      // club (organisation) for the competitor
+      const competitorOrgId = pr?.Organisation?.OrganisationId != null
+        ? toIntOrNull(pr.Organisation.OrganisationId)
         : null;
 
-      // RaceResult[]
-      let raceResults = [];
-      if (pr.RaceResult) {
-        raceResults = Array.isArray(pr.RaceResult) ? pr.RaceResult : [pr.RaceResult];
-      }
+      // Results are usually under RaceResult[] → Result[] for single-day
+      const raceResults = arrayify(pr.RaceResult);
+      // Some feeds may put Result directly under PersonResult (less common)
+      const directResults = raceResults.length === 0 ? arrayify(pr.Result) : [];
 
-      for (const rr of raceResults) {
-        const eventRaceId = rr?.EventRaceId ? parseInt(rr.EventRaceId, 10) : null;
-        if (!eventRaceId) continue;
+      const resultBlocksByRace = raceResults.length > 0 ? raceResults : directResults.map(r => ({ Result: r }));
 
-        // Result[]
-        let resultBlocks = [];
-        if (rr.Result) {
-          resultBlocks = Array.isArray(rr.Result) ? rr.Result : [rr.Result];
+      for (const rr of resultBlocksByRace) {
+        // prefer class-level EventRaceId, else use per-race one if present
+        let eventRaceId = classEventRaceId;
+        if (!eventRaceId && rr?.EventRaceId != null) {
+          const er = parseInt(rr.EventRaceId, 10);
+          if (!Number.isNaN(er)) eventRaceId = er;
         }
-        for (const r of resultBlocks) {
+
+        const resultsArray = arrayify(rr?.Result);
+        for (const r of resultsArray) {
           const resulttime = toSeconds(r?.Time);
           const resulttimediff = toSeconds(r?.TimeDiff);
-          const resultposition = r?.ResultPosition != null ? parseInt(r.ResultPosition, 10) : null;
+          const resultposition = toIntOrNull(r?.ResultPosition);
           const resultcompetitorstatus = r?.CompetitorStatus?.['@_value'] ?? null;
 
-          // Points: ONLY when status is 'OK', and (for multi-day we normally set starts to null)
-          // Keep behaviour: classresultnumberofstarts is null for multi–day per spec.
+          // Points: ONLY when status is exactly 'OK'
           let points = null;
-          const classresultnumberofstarts = null;
-
           if (
             resultcompetitorstatus === 'OK' &&
             klassfaktor != null &&
             resultposition != null &&
-            classresultnumberofstarts != null &&
-            classresultnumberofstarts > 0
+            classStarts != null &&
+            classStarts > 0
           ) {
-            const raw = klassfaktor * (1 - resultposition / classresultnumberofstarts);
+            const raw = klassfaktor * (1 - resultposition / classStarts);
             points = Math.round(raw * 100) / 100;
           }
 
-          results.push({
+          // Construct combined XML person name (given + family) if present.  We join
+          // available parts with a space and omit the field entirely if neither
+          // part exists in the XML.  This backup name is stored in the
+          // database for diagnostics when personid=0.
+          const xmlNameParts = [];
+          if (personGivenName) xmlNameParts.push(personGivenName);
+          if (personFamilyName) xmlNameParts.push(personFamilyName);
+          const xmlPersonName = xmlNameParts.length > 0 ? xmlNameParts.join(' ') : undefined;
+
+          const row = {
             personid: personId,
-            eventid: eventId != null ? parseInt(eventId, 10) : null,
+            eventid: null, // set in GetResultsFetcher
             eventraceid: eventRaceId,
             eventclassname: eventClassName,
             resulttime,
             resulttimediff,
             resultposition,
             resultcompetitorstatus,
-            classresultnumberofstarts, // explicitly null on multi‑day
+            classresultnumberofstarts: classStarts,
             classtypeid: classTypeId,
             klassfaktor,
             points,
             personage,
             clubparticipation: competitorOrgId,
-            batchid: batchId
-          });
+            batchid: null, // set in GetResultsFetcher
+
+            // Transient fields to improve downstream warnings in fetcher (not persisted)
+            persongiven: personGivenName ?? null,
+            personfamily: personFamilyName ?? null,
+          };
+          // Only include xmlpersonname if data is available
+          if (xmlPersonName) row.xmlpersonname = xmlPersonName;
+
+          results.push(row);
         }
       }
     }
   }
 
-  console.log(`[parseResultsMultiDay] Totalt antal resultat: ${results.length}`);
   return { results, warnings };
 }
 
-module.exports = parseResultsMultiDay;
+module.exports = parseResultsStandard;
