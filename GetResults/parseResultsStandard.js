@@ -240,9 +240,18 @@ function parseResultsStandard(xmlString) {
             points = Math.round(raw * 100) / 100;
           }
 
-          results.push({
+          // Construct combined XML person name (given + family) if present.  We join
+          // available parts with a space and omit the field entirely if neither
+          // part exists in the XML.  This backup name is stored in the
+          // database for diagnostics when personid=0.
+          const xmlNameParts = [];
+          if (personGivenName) xmlNameParts.push(personGivenName);
+          if (personFamilyName) xmlNameParts.push(personFamilyName);
+          const xmlPersonName = xmlNameParts.length > 0 ? xmlNameParts.join(' ') : undefined;
+
+          const row = {
             personid: personId,
-            eventid: null,     // set in GetResultsFetcher
+            eventid: null, // set in GetResultsFetcher
             eventraceid: eventRaceId,
             eventclassname: eventClassName,
             resulttime,
@@ -255,12 +264,16 @@ function parseResultsStandard(xmlString) {
             points,
             personage,
             clubparticipation: competitorOrgId,
-            batchid: null,     // set in GetResultsFetcher
+            batchid: null, // set in GetResultsFetcher
 
             // Transient fields to improve downstream warnings in fetcher (not persisted)
             persongiven: personGivenName ?? null,
             personfamily: personFamilyName ?? null,
-          });
+          };
+          // Only include xmlpersonname if data is available
+          if (xmlPersonName) row.xmlpersonname = xmlPersonName;
+
+          results.push(row);
         }
       }
     }
