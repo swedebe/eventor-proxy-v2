@@ -71,7 +71,7 @@ function getPersonName(person) {
   return `${fam} ${given}`.trim();
 }
 
-/** Hämta Given med sequence="1" (case-insensitivt), robust för sträng/objekt/array. */
+/** Hämta Given med sequence="1" */
 function getGivenSeq1(person) {
   const given = person?.PersonName?.Given;
   if (!given) return null;
@@ -107,10 +107,8 @@ function getTeamPrimaryOrgId(teamResult) {
 /** Läs text-/attribut-id från ett EventRace-element (olika varianter förekommer). */
 function readEventRaceIdFromElement(er) {
   if (!er) return null;
-  // Variant 1: attribut
   const attrId = toIntOrNull(er?.['@_id'] ?? er?.['@_raceId'] ?? er?.['@_Id']);
   if (attrId != null) return attrId;
-  // Variant 2: barnnod <EventRaceId>
   const childId = toIntOrNull(er?.EventRaceId ?? er?.eventRaceId ?? er?.EventRaceID);
   if (childId != null) return childId;
   return null;
@@ -121,8 +119,6 @@ function collectEventLevelRaceIds(resultList) {
   const ids = [];
   const ev = resultList?.Event;
   if (!ev) return ids;
-
-  // <Event><EventRace id="...">...</EventRace> (en eller flera)
   const evEventRace = ev.EventRace;
   if (evEventRace) {
     const arr = Array.isArray(evEventRace) ? evEventRace : [evEventRace];
@@ -131,12 +127,8 @@ function collectEventLevelRaceIds(resultList) {
       if (id != null) ids.push(id);
     }
   }
-
-  // <Event><EventRaceId>...</EventRaceId> (ibland direkt utan EventRace-element)
   const direct = toIntOrNull(ev?.EventRaceId);
   if (direct != null) ids.push(direct);
-
-  // Deduplicera
   return Array.from(new Set(ids));
 }
 
@@ -144,8 +136,6 @@ function collectEventLevelRaceIds(resultList) {
 function readClassLevelRaceId(classResult) {
   const cri = classResult?.ClassRaceInfo;
   if (!cri) return null;
-
-  // a) <ClassRaceInfo><EventRace id="...">
   const er = cri?.EventRace;
   if (er) {
     if (Array.isArray(er)) {
@@ -158,11 +148,8 @@ function readClassLevelRaceId(classResult) {
       if (id != null) return id;
     }
   }
-
-  // b) <ClassRaceInfo><EventRaceId>...</EventRaceId>
   const idByChild = toIntOrNull(cri?.EventRaceId);
   if (idByChild != null) return idByChild;
-
   return null;
 }
 
@@ -213,7 +200,7 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
     if (!Number.isNaN(eid)) eventId = eid;
   }
 
-  // Hämta ev. övergripande EventRaceId på event-nivå (används som sista fallback om entydigt)
+  // Event-nivåns EventRaceId (fallback om entydigt)
   const eventLevelRaceIds = collectEventLevelRaceIds(resultList);
 
   // Event year for age calculation
@@ -230,7 +217,7 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
     warnings.push('Kunde inte läsa eventår från <Event><StartDate><Date>. personage blir null.');
   }
 
-  // Normalise ClassResult
+  // Normalisera ClassResult
   const classResults = resultList.ClassResult
     ? Array.isArray(resultList.ClassResult)
       ? resultList.ClassResult
@@ -265,10 +252,10 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
       classStarts = null;
     }
 
-    // Klass-nivåns EventRaceId (ny robust variant)
+    // Klass-nivåns EventRaceId
     const classLevelRaceId = readClassLevelRaceId(classResult);
 
-    // Each TeamResult is a team in the relay
+    // Varje TeamResult är ett lag
     const teamResults = classResult?.TeamResult
       ? Array.isArray(classResult.TeamResult)
         ? classResult.TeamResult
@@ -278,16 +265,15 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
     for (const teamResult of teamResults) {
       const relayteamname = teamResult?.TeamName ?? null;
       const relayteamendposition = toIntOrNull(teamResult?.ResultPosition);
-      const relayteamenddiff = toSecondsRelay(teamResult?.TimeBehind);
+      // *** FIX: Hämta teamets slutdifferens från <TimeDiff> på TeamResult-nivå ***
+      const relayteamenddiff = toSecondsRelay(teamResult?.TimeDiff);
       const relayteamendstatus = teamResult?.TeamStatus?.['@_value'] ?? null;
 
-      // primary organisation for this team (for diagnostics)
+      // Teamets primära organisation (diagnostik)
       const teamPrimaryOrgId = getTeamPrimaryOrgId(teamResult);
 
-      // === NY, ROBUST HÄMTNING AV EVENTRACEID (prioritering beskriven högre upp) ===
+      // Robust hämtning av EventRaceId (Team -> Klass -> Event)
       let eventRaceId = null;
-
-      // 1) Team-nivå: <EventRace id="..."> eller <EventRaceId>...
       if (teamResult?.EventRace) {
         const trER = teamResult.EventRace;
         if (Array.isArray(trER)) {
@@ -303,18 +289,14 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
         const byTeamChild = toIntOrNull(teamResult?.EventRaceId);
         if (byTeamChild != null) eventRaceId = byTeamChild;
       }
-
-      // 2) Klass-nivå
       if (eventRaceId == null && classLevelRaceId != null) {
         eventRaceId = classLevelRaceId;
       }
-
-      // 3) Event-nivå (bara om entydigt)
       if (eventRaceId == null && eventLevelRaceIds.length === 1) {
         eventRaceId = eventLevelRaceIds[0];
       }
 
-      // Each TeamMemberResult is a leg/competitor
+      // Varje TeamMemberResult är en sträcka/löpare
       const memberResults = teamResult?.TeamMemberResult
         ? Array.isArray(teamResult.TeamMemberResult)
           ? teamResult.TeamMemberResult
@@ -322,7 +304,7 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
         : [];
 
       for (const tmr of memberResults) {
-        // Skip 1: "vacant" placeholders
+        // Skip 1: "vacant"
         const given1 = (getGivenSeq1(tmr?.Person) || '').trim().toLowerCase();
         if (given1 === 'vacant') {
           const name = getPersonName(tmr?.Person || {});
@@ -360,7 +342,7 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
           warnings.push(`PersonId saknas för ${name} – har satt personid=0`);
         }
 
-        // competitor age
+        // age
         let personage = null;
         const birthDateStr = tmr?.Person?.BirthDate?.Date;
         if (typeof birthDateStr === 'string') {
@@ -375,21 +357,17 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
           if (!Number.isNaN(a)) personage = a;
         }
 
-        // leg-specific values
+        // leg-specific
         const relayleg = toIntOrNull(tmr?.Leg);
+        const resulttime = toSecondsRelay(tmr?.Time); // sträcktid
 
-        // resulttime = tmr.Time (leg time) → seconds
-        const resulttime = toSecondsRelay(tmr?.Time);
-
-        // resulttimediff = TimeBehind type="Leg"
+        // Leg-diff och Leg-position via typade noder
         const timeBehindLegRaw = readTypedValue(tmr?.TimeBehind, 'Leg');
         const resulttimediff = toSecondsRelay(timeBehindLegRaw);
-
-        // resultposition = Position type="Leg"
         const positionLegRaw = readTypedValue(tmr?.Position, 'Leg');
         const resultposition = toIntOrNull(positionLegRaw);
 
-        // relaylegoverallposition = OverallResult/ResultPosition (team rank after this leg)
+        // Teamets placering efter denna sträcka
         let relaylegoverallposition = null;
         const ovRes = tmr?.OverallResult;
         if (ovRes?.ResultPosition != null) {
@@ -397,14 +375,14 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
           if (!Number.isNaN(rp)) relaylegoverallposition = rp;
         }
 
-        // resultcompetitorstatus from <CompetitorStatus>
+        // status
         let resultcompetitorstatus = null;
         if (tmr?.CompetitorStatus) {
           resultcompetitorstatus =
             tmr.CompetitorStatus['@_value'] ?? tmr.CompetitorStatus.value ?? null;
         }
 
-        // points only when all needed values exist AND status is 'OK'
+        // poäng endast vid OK + nödvändiga värden finns
         let points = null;
         if (
           resultcompetitorstatus === 'OK' &&
@@ -417,21 +395,21 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
           points = Math.round(raw * 100) / 100;
         }
 
-        // Extract person family and given names for downstream diagnostics
+        // Namn (diagnostik/loggar)
         const personFamilyName = tmr?.Person?.PersonName?.Family ?? null;
         const personGivenName = getGivenSeq1(tmr?.Person) ?? null;
 
-        // Construct backup XML person name (given + family) if present
-        const nameParts = [];
-        if (personGivenName) nameParts.push(personGivenName);
-        if (personFamilyName) nameParts.push(personFamilyName);
-        const xmlPersonName = nameParts.length > 0 ? nameParts.join(' ') : undefined;
+        // Backup-namn att spara i xmlpersonname om tillgängligt
+        const parts = [];
+        if (personGivenName) parts.push(personGivenName);
+        if (personFamilyName) parts.push(personFamilyName);
+        const xmlPersonName = parts.length > 0 ? parts.join(' ') : undefined;
 
         results.push({
           // core identity
           personid: personId,
           eventid: eventId,
-          eventraceid: eventRaceId, // ← nu robust från Team/Klass/Event
+          eventraceid: eventRaceId,
           eventclassname: eventClassName,
 
           // team-level final outcome
@@ -457,7 +435,7 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
           // person
           personage,
 
-          // include names for better warnings in fetcher; these fields är ej persistenta
+          // include names for better warnings in fetcher; not persisted
           persongiven: personGivenName,
           personfamily: personFamilyName,
 
@@ -468,7 +446,7 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
           clubparticipation: competitorOrgId ?? null
         });
 
-        // Info-varning om teamets primära klubb skiljer sig från importerande klubb (diagnostik)
+        // Diagnostik: lagets primära klubb diffar mot importerande klubb
         if (
           teamPrimaryOrgId != null &&
           importingOrganisationId != null &&
@@ -488,14 +466,11 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
 
 function readTypedValue(node, wantedType = 'Leg') {
   if (node == null) return null;
-
   if (typeof node === 'string' || typeof node === 'number') return node;
-
   if (!Array.isArray(node)) {
     if (node['@_type'] && node['@_type'] !== wantedType) return null;
     return node['#text'] ?? node.value ?? null;
   }
-
   const typed = node.find((n) => n && n['@_type'] === wantedType);
   const pick = typed ?? node[0];
   if (pick == null) return null;
