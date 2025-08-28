@@ -3,6 +3,10 @@
 // skriver nya rader, och lägger varningar – utan att skriva över organisation/clubparticipation.
 // Denna version behåller ditt befintliga arbetssätt (node-fetch + XML-sträng till parser)
 // men kopplar på robust loggning med responsecode/errormessage via logHelpersGetResults.
+// Rättningar i denna version:
+// 1) Skippa rader där eventraceid saknas + logga warning per rad.
+// 2) Undertryck "Resultat importerade (0 rader)" när DB-fel inträffat i någon chunk.
+// 3) Övriga loggförbättringar som ger tydlig orsak.
 
 const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
@@ -17,9 +21,7 @@ const {
   logApiEnd,
   logApiError,
   logDbError,
-  logInfo,
-  logWarn,
-  logDebug
+  logInfo
 } = require('./logHelpersGetResults.js');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -75,7 +77,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
   const url = `https://eventor.orientering.se/api/results/organisation?organisationIds=${organisationId}&eventId=${eventId}`;
   console.log(`${logContext} Hämtar resultat från Eventor: ${url}`);
 
-  // Startlogg (skriver started + request). Vi får ett logId (kan vara null om insert faller)
+  // Startlogg (skriver started + request)
   const logId = await logApiStart(url, batchid, {
     source: 'Eventor',
     organisationid: organisationId,
@@ -92,41 +94,36 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     xml = await response.text();
   } catch (netErr) {
     console.error(`${logContext} Nätverksfel mot Eventor:`, netErr);
-    await logApiError(logId, netErr, undefined, url); // fyller responsecode=-1 + errormessage
+    await logApiError(logId, netErr, undefined, url);
     return { success: false };
   }
 
   if (!response?.ok) {
-    // Logga error med status och kort body-snutt
     console.error(
       `${logContext} Eventor-svar ej OK (${response.status}). Förhandsinnehåll:`,
       xml?.slice(0, 500) || '<tomt>'
     );
-    await logApiError(logId, response.status, undefined, url); // sätter completed + responsecode
+    await logApiError(logId, response.status, undefined, url);
     return { success: false };
   }
 
-  // Allt väl: markera slut på API-anropet (200) och lägg en liten OK-notis i comment
   await logApiEnd(logId, 200, 'OK');
 
-  // 2) Välj parser enligt din befintliga heuristik (XML-sträng in)
+  // 2) Välj parser
   const parserKind = chooseParserFromXml(xml);
   console.log(`${logContext} Parser: ${parserKind}`);
 
   // 3) Kör parser + samla varningar
   let parsed = [];
-  // warningsFromParse will hold objects with shape { message: string, personid: number }
   let warningsFromParse = [];
   try {
     if (parserKind === 'relay') {
-      // Viktigt: skicka importerande klubb så parsern kan filtrera bort andra klubbar + "vacant"
       const out = parseResultsRelay(xml, organisationId);
       if (Array.isArray(out)) {
         parsed = out;
         warningsFromParse = [];
       } else {
         parsed = out?.results || [];
-        // map warnings (strings) to objects with personid=0
         warningsFromParse = (out?.warnings || []).map((msg) => ({
           message: msg,
           personid: 0
@@ -143,7 +140,6 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     }
   } catch (parseErr) {
     console.error(`${logContext} Fel vid parsning:`, parseErr);
-    // Logga som API-fel för att fånga upp felet i logdata med message
     await insertLogData(supabase, {
       source: 'GetResultsFetcher',
       level: 'error',
@@ -168,6 +164,71 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     return { success: true, insertedRows: 0 };
   }
 
+  // 3a) NYTT: Skippa rader utan eventraceid (DB kräver NOT NULL + FK)
+  try {
+    const missingEventRace = parsed.filter((r) => r.eventraceid == null);
+    if (missingEventRace.length > 0) {
+      const warningRows = missingEventRace.map((r) => {
+        // några hjälptexter för diagnos
+        const given = r.persongiven ?? '';
+        const family = r.personfamily ?? '';
+        const leg = r.relayleg != null ? r.relayleg : '';
+        const team = r.relayteamname ?? '';
+        return {
+          organisationid: organisationId,
+          eventid: eventId,
+          batchid,
+          personid: r.personid ?? 0,
+          message: `Rad hoppad över: eventraceid saknas. personname given="${given}", family="${family}", team="${team}", leg=${leg}, personid=${r.personid ?? 0}`,
+          created: new Date().toISOString()
+        };
+      });
+
+      const { error: warnErr } = await supabase.from('warnings').insert(warningRows);
+      if (warnErr) {
+        console.error(`${logContext} Fel vid INSERT warnings (saknat eventraceid):`, warnErr.message);
+        await logDbError(
+          { organisationid: organisationId, eventid: eventId, batchid },
+          warnErr,
+          'Fel vid INSERT warnings (saknat eventraceid)'
+        );
+      }
+      const before = parsed.length;
+      parsed = parsed.filter((r) => r.eventraceid != null);
+      const after = parsed.length;
+      console.log(`${logContext} Filtrerade bort ${before - after} rad(er) utan eventraceid`);
+      await insertLogData(supabase, {
+        source: 'GetResultsFetcher',
+        level: 'info',
+        comment: `Filtrerade bort ${before - after} rad(er) utan eventraceid`,
+        organisationid: organisationId,
+        eventid: eventId,
+        batchid
+      });
+    }
+  } catch (e) {
+    console.warn(`${logContext} Ov. fel vid filtrering/loggning för saknat eventraceid:`, e.message);
+    await logDbError(
+      { organisationid: organisationId, eventid: eventId, batchid },
+      e,
+      'Ov. fel vid filtrering saknat eventraceid'
+    );
+  }
+
+  // Om allt försvann efter filtrering → ingen insert
+  if (!parsed || parsed.length === 0) {
+    console.log(`${logContext} 0 rader kvar efter filtrering – inga inserts gjordes`);
+    await insertLogData(supabase, {
+      source: 'GetResultsFetcher',
+      level: 'info',
+      comment: '0 rader kvar efter filtrering – inga inserts gjordes',
+      organisationid: organisationId,
+      eventid: eventId,
+      batchid
+    });
+    return { success: true, insertedRows: 0 };
+  }
+
   // 3b) Bevara readonly-rader: filtrera bort inkommande rader som krockar med befintliga readonly=1
   try {
     const { data: readonlyRows, error: readonlyRowsErr } = await supabase
@@ -178,10 +239,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       .eq('readonly', 1);
 
     if (readonlyRowsErr) {
-      console.warn(
-        `${logContext} Kunde inte läsa readonly-resultatrader:`,
-        readonlyRowsErr.message
-      );
+      console.warn(`${logContext} Kunde inte läsa readonly-resultatrader:`, readonlyRowsErr.message);
       await logDbError(
         { organisationid: organisationId, eventid: eventId, batchid },
         readonlyRowsErr,
@@ -198,9 +256,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       });
       const filteredOut = before - parsed.length;
       if (filteredOut > 0) {
-        console.log(
-          `${logContext} Skippar ${filteredOut} resultat från XML p.g.a. readonly-krock`
-        );
+        console.log(`${logContext} Skippar ${filteredOut} resultat från XML p.g.a. readonly-krock`);
         await insertLogData(supabase, {
           source: 'GetResultsFetcher',
           level: 'info',
@@ -212,10 +268,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       }
     }
   } catch (e) {
-    console.warn(
-      `${logContext} Ovänterat fel vid filtrering av readonly-resultat:`,
-      e.message
-    );
+    console.warn(`${logContext} Ovänterat fel vid filtrering av readonly-resultat:`, e.message);
     await logDbError(
       { organisationid: organisationId, eventid: eventId, batchid },
       e,
@@ -223,7 +276,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     );
   }
 
-  console.log(`${logContext} ${parsed.length} resultat efter readonly-filtrering`);
+  console.log(`${logContext} ${parsed.length} resultat efter filtrering`);
 
   // 4) Rensa gamla rader (utan att röra readonly=1)
   try {
@@ -253,7 +306,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     );
   }
 
-  // 5) Batch‑metadata på raderna + varningar om klubbsiffra
+  // 5) Batch-metadata på raderna + varningar om klubbsiffra
   for (const row of parsed) {
     const originalClubParticipation = row.clubparticipation ?? null;
 
@@ -275,8 +328,14 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
       if (row.relayteamname) parts.push(`team="${row.relayteamname}"`);
       if (row.relayleg != null) parts.push(`leg=${row.relayleg}`);
       const msg = parts.join(' | ');
-      console.warn(`[parseResults][Warning] ${msg}`);
-      warningsFromParse.push({ message: msg, personid: row.personid ?? 0 });
+      await insertLogData(supabase, {
+        source: 'GetResultsFetcher',
+        level: 'warn',
+        organisationid: organisationId,
+        eventid: eventId,
+        batchid,
+        comment: msg
+      });
     }
 
     if (originalClubParticipation == null) {
@@ -291,26 +350,24 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         const h = Math.floor(secs / 3600);
         const m = Math.floor((secs % 3600) / 60);
         const s = Math.floor(secs % 60);
-        if (h > 0) {
-          timeStr = `${h}:${m.toString().padStart(2, '0')}:${s
-            .toString()
-            .padStart(2, '0')}`;
-        } else {
-          timeStr = `${m}:${s.toString().padStart(2, '0')}`;
-        }
+        timeStr = h > 0 ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}` : `${m}:${s.toString().padStart(2, '0')}`;
       }
       const msg = `XML clubparticipation saknas – importerande klubb är ${organisationId}. Raden sparas med null i clubparticipation. personname given="${given}", personname family="${family}", leg=${leg}, time=${timeStr ?? 'null'}`;
-      console.warn(`[parseResults][Warning] ${msg}`);
-      warningsFromParse.push({ message: msg, personid: row.personid ?? 0 });
+      await insertLogData(supabase, {
+        source: 'GetResultsFetcher',
+        level: 'warn',
+        organisationid: organisationId,
+        eventid: eventId,
+        batchid,
+        comment: msg
+      });
     }
   }
 
-  // 6) Skriv varningar (parserns + våra egna)
+  // 6) Skriv varningar från parsern (om några) – redan loggade vissa ovan
   try {
-    if (warningsFromParse.length > 0) {
-      // Log all warnings for visibility
-      for (const w of warningsFromParse)
-        console.warn(`[parseResults][Warning] ${w.message}`);
+    // Skicka parser-warnings till warnings-tabellen
+    if (Array.isArray(warningsFromParse) && warningsFromParse.length > 0) {
       const warningRows = warningsFromParse.map((w) => ({
         organisationid: organisationId,
         eventid: eventId,
@@ -323,10 +380,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         .from('warnings')
         .insert(warningRows);
       if (warningsInsertError) {
-        console.error(
-          `${logContext} Fel vid insert av warnings:`,
-          warningsInsertError.message
-        );
+        console.error(`${logContext} Fel vid insert av warnings:`, warningsInsertError.message);
         await logDbError(
           { organisationid: organisationId, eventid: eventId, batchid },
           warningsInsertError,
@@ -348,13 +402,14 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
   const sanitizedParsed = parsed.map(({ persongiven, personfamily, ...rest }) => rest);
   const chunks = chunkArray(sanitizedParsed, 1000);
   let totalInserted = 0;
+  let hadDbError = false;
 
   for (const [idx, chunk] of chunks.entries()) {
     const { data, error } = await supabase.from('results').insert(chunk);
     if (error) {
+      hadDbError = true;
       const msg = `Fel vid insert (chunk ${idx + 1}/${chunks.length}): ${error.message}`;
       console.error(`${logContext} ${msg}`);
-      // Logga i logdata (API/DB) så det syns i din UI
       await insertLogData(supabase, {
         source: 'GetResultsFetcher',
         level: 'error',
@@ -375,20 +430,34 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     totalInserted += data?.length ?? chunk.length;
   }
 
-  console.log(`${logContext} Klart. Insatta rader: ${totalInserted}`);
-  await insertLogData(supabase, {
-    source: 'GetResultsFetcher',
-    level: 'info',
-    comment: `Resultat importerade (${totalInserted} rader)`,
-    organisationid: organisationId,
-    eventid: eventId,
-    batchid
-  });
+  // 8) Slutlogg – beroende på om DB-fel inträffade
+  if (hadDbError) {
+    const failMsg = `Import misslyckades – minst ett DB-fel inträffade. Insatta rader: ${totalInserted}. Se tidigare DB_ERROR-loggar för detaljer.`;
+    console.error(`${logContext} ${failMsg}`);
+    await insertLogData(supabase, {
+      source: 'GetResultsFetcher',
+      level: 'error',
+      comment: failMsg,
+      organisationid: organisationId,
+      eventid: eventId,
+      batchid
+    });
+  } else {
+    console.log(`${logContext} Klart. Insatta rader: ${totalInserted}`);
+    await insertLogData(supabase, {
+      source: 'GetResultsFetcher',
+      level: 'info',
+      comment: `Resultat importerade (${totalInserted} rader)`,
+      organisationid: organisationId,
+      eventid: eventId,
+      batchid
+    });
+  }
 
   // Mindre paus för att inte stressa Eventor när flera events körs
   await sleep(300);
 
-  return { success: true, insertedRows: totalInserted };
+  return { success: !hadDbError, insertedRows: totalInserted };
 }
 
 // === Klubbloppare ============================================================
