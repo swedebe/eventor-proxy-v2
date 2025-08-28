@@ -327,6 +327,11 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
         const personFamilyName = tmr?.Person?.PersonName?.Family ?? null;
         // Use helper getGivenSeq1 to robustly extract the given name with sequence="1"
         const personGivenName = getGivenSeq1(tmr?.Person) ?? null;
+        // Construct backup XML person name (given + family) if present
+        const nameParts = [];
+        if (personGivenName) nameParts.push(personGivenName);
+        if (personFamilyName) nameParts.push(personFamilyName);
+        const xmlPersonName = nameParts.length > 0 ? nameParts.join(' ') : undefined;
 
         results.push({
           // core identity
@@ -361,6 +366,9 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
           // include names for better warnings in fetcher; these fields are not persisted to DB
           persongiven: personGivenName,
           personfamily: personFamilyName,
+
+          // Persist backup name from XML when available
+          ...(xmlPersonName ? { xmlpersonname: xmlPersonName } : {}),
 
           // behåll löparens klubb (ska inte skrivas över i fetchern)
           clubparticipation: competitorOrgId ?? null
