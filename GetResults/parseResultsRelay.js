@@ -105,6 +105,58 @@ function getTeamPrimaryOrgId(teamResult) {
 }
 
 /**
+ * Försök hämta EventRace-id från olika kända ställen i Eventors stafett-XML.
+ * Prioritet:
+ *   1) teamResult.EventRace['@_id']          (det vi explicitly vill säkra)
+ *   2) classResult.ClassRaceInfo.EventRace['@_id'] (ibland ligger det på klassnivå)
+ *   3) teamResult.EventRaceId                (fallback – äldre/alternativ struktur)
+ *   4) teamResult.RaceId                     (sista utväg)
+ */
+function getEventRaceId(teamResult, classResult) {
+  // 1) <EventRace id="...">
+  const trEventRace = teamResult?.EventRace;
+  if (trEventRace) {
+    if (Array.isArray(trEventRace)) {
+      for (const er of trEventRace) {
+        const id = toIntOrNull(er?.['@_id'] ?? er?.['@_raceId'] ?? er?.['@_Id']);
+        if (id != null) return id;
+      }
+    } else {
+      const id = toIntOrNull(
+        trEventRace?.['@_id'] ?? trEventRace?.['@_raceId'] ?? trEventRace?.['@_Id']
+      );
+      if (id != null) return id;
+    }
+  }
+
+  // 2) På klassnivå
+  const crEventRace = classResult?.ClassRaceInfo?.EventRace;
+  if (crEventRace) {
+    if (Array.isArray(crEventRace)) {
+      for (const er of crEventRace) {
+        const id = toIntOrNull(er?.['@_id'] ?? er?.['@_raceId'] ?? er?.['@_Id']);
+        if (id != null) return id;
+      }
+    } else {
+      const id = toIntOrNull(
+        crEventRace?.['@_id'] ?? crEventRace?.['@_raceId'] ?? crEventRace?.['@_Id']
+      );
+      if (id != null) return id;
+    }
+  }
+
+  // 3) Fallback: EventRaceId
+  const byEventRaceIdTag = toIntOrNull(teamResult?.EventRaceId);
+  if (byEventRaceIdTag != null) return byEventRaceIdTag;
+
+  // 4) Fallback: RaceId
+  const byRaceIdTag = toIntOrNull(teamResult?.RaceId);
+  if (byRaceIdTag != null) return byRaceIdTag;
+
+  return null;
+}
+
+/**
  * Parse relay results XML into flat rows for `results` and collect warnings.
  * IMPORTANT:
  * - importingOrganisationId: den klubb som anropet gjordes för (t.ex. 114).
@@ -217,8 +269,8 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
       // primary organisation for this team (for diagnostics)
       const teamPrimaryOrgId = getTeamPrimaryOrgId(teamResult);
 
-      const teamRaceIdRaw = teamResult?.EventRaceId ?? teamResult?.RaceId ?? null;
-      const eventRaceId = toIntOrNull(teamRaceIdRaw);
+      // NEW: robust hämtning av EventRace-id
+      const eventRaceId = getEventRaceId(teamResult, classResult);
 
       // Each TeamMemberResult is a leg/competitor
       const memberResults = teamResult?.TeamMemberResult
@@ -325,8 +377,8 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
 
         // Extract person family and given names for downstream diagnostics
         const personFamilyName = tmr?.Person?.PersonName?.Family ?? null;
-        // Use helper getGivenSeq1 to robustly extract the given name with sequence="1"
         const personGivenName = getGivenSeq1(tmr?.Person) ?? null;
+
         // Construct backup XML person name (given + family) if present
         const nameParts = [];
         if (personGivenName) nameParts.push(personGivenName);
@@ -337,7 +389,7 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
           // core identity
           personid: personId,
           eventid: eventId,
-          eventraceid: eventRaceId,
+          eventraceid: eventRaceId, // ← SÄKRAD FRÅN <EventRace id="...">
           eventclassname: eventClassName,
 
           // team-level final outcome
@@ -375,7 +427,11 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
         });
 
         // Info-varning om teamets primära klubb skiljer sig från importerande klubb (diagnostik)
-        if (teamPrimaryOrgId != null && importingOrganisationId != null && teamPrimaryOrgId !== importingOrganisationId) {
+        if (
+          teamPrimaryOrgId != null &&
+          importingOrganisationId != null &&
+          teamPrimaryOrgId !== importingOrganisationId
+        ) {
           warnings.push(
             `Team "${relayteamname ?? '(okänt)'}": primär teamklubb (${teamPrimaryOrgId}) ≠ importerande klubb (${importingOrganisationId}).`
           );
