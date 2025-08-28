@@ -104,54 +104,64 @@ function getTeamPrimaryOrgId(teamResult) {
   return null;
 }
 
-/**
- * Försök hämta EventRace-id från olika kända ställen i Eventors stafett-XML.
- * Prioritet:
- *   1) teamResult.EventRace['@_id']          (det vi explicitly vill säkra)
- *   2) classResult.ClassRaceInfo.EventRace['@_id'] (ibland ligger det på klassnivå)
- *   3) teamResult.EventRaceId                (fallback – äldre/alternativ struktur)
- *   4) teamResult.RaceId                     (sista utväg)
- */
-function getEventRaceId(teamResult, classResult) {
-  // 1) <EventRace id="...">
-  const trEventRace = teamResult?.EventRace;
-  if (trEventRace) {
-    if (Array.isArray(trEventRace)) {
-      for (const er of trEventRace) {
-        const id = toIntOrNull(er?.['@_id'] ?? er?.['@_raceId'] ?? er?.['@_Id']);
+/** Läs text-/attribut-id från ett EventRace-element (olika varianter förekommer). */
+function readEventRaceIdFromElement(er) {
+  if (!er) return null;
+  // Variant 1: attribut
+  const attrId = toIntOrNull(er?.['@_id'] ?? er?.['@_raceId'] ?? er?.['@_Id']);
+  if (attrId != null) return attrId;
+  // Variant 2: barnnod <EventRaceId>
+  const childId = toIntOrNull(er?.EventRaceId ?? er?.eventRaceId ?? er?.EventRaceID);
+  if (childId != null) return childId;
+  return null;
+}
+
+/** Extrahera ALLA EventRaceId på event-nivån (Event->EventRace...). */
+function collectEventLevelRaceIds(resultList) {
+  const ids = [];
+  const ev = resultList?.Event;
+  if (!ev) return ids;
+
+  // <Event><EventRace id="...">...</EventRace> (en eller flera)
+  const evEventRace = ev.EventRace;
+  if (evEventRace) {
+    const arr = Array.isArray(evEventRace) ? evEventRace : [evEventRace];
+    for (const er of arr) {
+      const id = readEventRaceIdFromElement(er);
+      if (id != null) ids.push(id);
+    }
+  }
+
+  // <Event><EventRaceId>...</EventRaceId> (ibland direkt utan EventRace-element)
+  const direct = toIntOrNull(ev?.EventRaceId);
+  if (direct != null) ids.push(direct);
+
+  // Deduplicera
+  return Array.from(new Set(ids));
+}
+
+/** Extrahera EventRaceId på klassnivå (ClassRaceInfo ...). */
+function readClassLevelRaceId(classResult) {
+  const cri = classResult?.ClassRaceInfo;
+  if (!cri) return null;
+
+  // a) <ClassRaceInfo><EventRace id="...">
+  const er = cri?.EventRace;
+  if (er) {
+    if (Array.isArray(er)) {
+      for (const x of er) {
+        const id = readEventRaceIdFromElement(x);
         if (id != null) return id;
       }
     } else {
-      const id = toIntOrNull(
-        trEventRace?.['@_id'] ?? trEventRace?.['@_raceId'] ?? trEventRace?.['@_Id']
-      );
+      const id = readEventRaceIdFromElement(er);
       if (id != null) return id;
     }
   }
 
-  // 2) På klassnivå
-  const crEventRace = classResult?.ClassRaceInfo?.EventRace;
-  if (crEventRace) {
-    if (Array.isArray(crEventRace)) {
-      for (const er of crEventRace) {
-        const id = toIntOrNull(er?.['@_id'] ?? er?.['@_raceId'] ?? er?.['@_Id']);
-        if (id != null) return id;
-      }
-    } else {
-      const id = toIntOrNull(
-        crEventRace?.['@_id'] ?? crEventRace?.['@_raceId'] ?? crEventRace?.['@_Id']
-      );
-      if (id != null) return id;
-    }
-  }
-
-  // 3) Fallback: EventRaceId
-  const byEventRaceIdTag = toIntOrNull(teamResult?.EventRaceId);
-  if (byEventRaceIdTag != null) return byEventRaceIdTag;
-
-  // 4) Fallback: RaceId
-  const byRaceIdTag = toIntOrNull(teamResult?.RaceId);
-  if (byRaceIdTag != null) return byRaceIdTag;
+  // b) <ClassRaceInfo><EventRaceId>...</EventRaceId>
+  const idByChild = toIntOrNull(cri?.EventRaceId);
+  if (idByChild != null) return idByChild;
 
   return null;
 }
@@ -203,6 +213,9 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
     if (!Number.isNaN(eid)) eventId = eid;
   }
 
+  // Hämta ev. övergripande EventRaceId på event-nivå (används som sista fallback om entydigt)
+  const eventLevelRaceIds = collectEventLevelRaceIds(resultList);
+
   // Event year for age calculation
   let eventYear = null;
   const dateStr = resultList.Event?.StartDate?.Date;
@@ -237,8 +250,7 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
     }
     const klassfaktor = klassFaktorFromClassTypeId(classTypeId);
 
-    // classresultnumberofstarts (antal lag i klassen)
-    // VIKTIGT: På stafetter (RelaySingleDay) ska vi inte hämta/visa antal lag → alltid null.
+    // classresultnumberofstarts: alltid null för stafetter
     let classStarts = null;
     if (!isRelaySingleDay) {
       if (classResult['@_numberOfStarts'] != null) {
@@ -252,6 +264,9 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
     } else {
       classStarts = null;
     }
+
+    // Klass-nivåns EventRaceId (ny robust variant)
+    const classLevelRaceId = readClassLevelRaceId(classResult);
 
     // Each TeamResult is a team in the relay
     const teamResults = classResult?.TeamResult
@@ -269,8 +284,35 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
       // primary organisation for this team (for diagnostics)
       const teamPrimaryOrgId = getTeamPrimaryOrgId(teamResult);
 
-      // NEW: robust hämtning av EventRace-id
-      const eventRaceId = getEventRaceId(teamResult, classResult);
+      // === NY, ROBUST HÄMTNING AV EVENTRACEID (prioritering beskriven högre upp) ===
+      let eventRaceId = null;
+
+      // 1) Team-nivå: <EventRace id="..."> eller <EventRaceId>...
+      if (teamResult?.EventRace) {
+        const trER = teamResult.EventRace;
+        if (Array.isArray(trER)) {
+          for (const er of trER) {
+            eventRaceId = readEventRaceIdFromElement(er);
+            if (eventRaceId != null) break;
+          }
+        } else {
+          eventRaceId = readEventRaceIdFromElement(trER);
+        }
+      }
+      if (eventRaceId == null) {
+        const byTeamChild = toIntOrNull(teamResult?.EventRaceId);
+        if (byTeamChild != null) eventRaceId = byTeamChild;
+      }
+
+      // 2) Klass-nivå
+      if (eventRaceId == null && classLevelRaceId != null) {
+        eventRaceId = classLevelRaceId;
+      }
+
+      // 3) Event-nivå (bara om entydigt)
+      if (eventRaceId == null && eventLevelRaceIds.length === 1) {
+        eventRaceId = eventLevelRaceIds[0];
+      }
 
       // Each TeamMemberResult is a leg/competitor
       const memberResults = teamResult?.TeamMemberResult
@@ -389,7 +431,7 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
           // core identity
           personid: personId,
           eventid: eventId,
-          eventraceid: eventRaceId, // ← SÄKRAD FRÅN <EventRace id="...">
+          eventraceid: eventRaceId, // ← nu robust från Team/Klass/Event
           eventclassname: eventClassName,
 
           // team-level final outcome
@@ -415,7 +457,7 @@ function parseResultsRelay(xmlString, importingOrganisationId) {
           // person
           personage,
 
-          // include names for better warnings in fetcher; these fields are not persisted to DB
+          // include names for better warnings in fetcher; these fields är ej persistenta
           persongiven: personGivenName,
           personfamily: personFamilyName,
 
