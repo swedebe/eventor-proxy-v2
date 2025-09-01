@@ -1,12 +1,16 @@
 // GetResults/GetResultsFetcher.js
-// Väljer parser (Standard/MultiDay/Relay), loggar, rensar gamla rader,
-// skriver nya rader, och lägger varningar – utan att skriva över organisation/clubparticipation.
-// Denna version behåller ditt befintliga arbetssätt (node-fetch + XML-sträng till parser)
-// men kopplar på robust loggning med responsecode/errormessage via logHelpersGetResults.
-// Rättningar i denna version:
+// Väljer parser (Standard/MultiDay/Relay), loggar, rensar gamla rader per
+// clubparticipation+eventid (med UNDANTAG readonly=1), skriver nya rader, och
+// lägger varningar – utan att skriva över organisation/clubparticipation från XML.
+// Denna version behåller ditt arbetssätt (node-fetch + XML-sträng till parser)
+// och har robust loggning via logHelpersGetResults.
+//
+// Viktiga punkter i denna version:
 // 1) Skippa rader där eventraceid saknas + logga warning per rad.
-// 2) Undertryck "Resultat importerade (0 rader)" när DB-fel inträffat i någon chunk.
-// 3) Övriga loggförbättringar som ger tydlig orsak.
+// 2) Bevara readonly=1: inkommande rader som krockar med readonly=1 i DB filtreras bort.
+// 3) Rensa gamla rader PER clubparticipation+eventid (från XML), inte per importerande klubb.
+//    Rensning hoppar över readonly=1.
+// 4) Övriga loggförbättringar som ger tydlig orsak.
 
 const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
@@ -27,7 +31,7 @@ const {
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// Bekräftelse i logg (kort) att vi har en nyckel – bra vid felsökning i Render (trunkerad)
+// Kort bekräftelse i logg att vi har en nyckel – bra vid felsökning i Render (trunkerad)
 console.log(
   '[GetResultsFetcher] SUPABASE_SERVICE_ROLE_KEY prefix:',
   SUPABASE_SERVICE_ROLE_KEY?.substring(0, 8) || '<saknas>'
@@ -38,7 +42,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 // === Hjälpare =================================================================
 
 /**
- * Parser-val direkt ur XML-strängen (behåller din heuristik).
+ * Parser-val direkt ur XML-strängen.
  * - Relay: om <TeamResult> finns
  * - MultiDay: om eventForm="IndMultiDay" eller <EventForm>IndMultiDay</EventForm>
  * - Standard: annars
@@ -65,7 +69,7 @@ function sleep(ms) {
 // === Kärnflöde per event =====================================================
 
 /**
- * organisationId = importerande klubb
+ * organisationId = importerande klubb (använder vi för loggning/anrop mot Eventor)
  * eventId       = Eventor EventId
  * batchid       = aktuell körnings batch-id (kan vara null i vissa flöden)
  * apikey        = Eventor API-nyckel
@@ -164,12 +168,11 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     return { success: true, insertedRows: 0 };
   }
 
-  // 3a) NYTT: Skippa rader utan eventraceid (DB kräver NOT NULL + FK)
+  // 3a) Skippa rader utan eventraceid (DB kräver NOT NULL + FK)
   try {
     const missingEventRace = parsed.filter((r) => r.eventraceid == null);
     if (missingEventRace.length > 0) {
       const warningRows = missingEventRace.map((r) => {
-        // några hjälptexter för diagnos
         const given = r.persongiven ?? '';
         const family = r.personfamily ?? '';
         const leg = r.relayleg != null ? r.relayleg : '';
@@ -229,29 +232,62 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     return { success: true, insertedRows: 0 };
   }
 
-  // 3b) Bevara readonly-rader: filtrera bort inkommande rader som krockar med befintliga readonly=1
+  // === NYCKEL-DEL 1: Bevara readonly-rader ===================================
+  // Hämta readonly=1-rader i DB för eventet och de klubbar som finns i inkommande data.
+  // Filtrera bort inkommande rader som krockar med en readonly-rad.
+  // Krock-nyckel: clubparticipation|personid|eventraceid|relayleg
   try {
-    const { data: readonlyRows, error: readonlyRowsErr } = await supabase
-      .from('results')
-      .select('personid, eventraceid, relayleg')
-      .eq('clubparticipation', organisationId)
-      .eq('eventid', eventId)
-      .eq('readonly', 1);
+    // Samla alla inkommande klubbar (inkl. null)
+    const incomingClubs = new Set(parsed.map((r) => (r.clubparticipation ?? null)));
+    const clubsNonNull = Array.from(incomingClubs).filter((v) => v !== null);
 
-    if (readonlyRowsErr) {
-      console.warn(`${logContext} Kunde inte läsa readonly-resultatrader:`, readonlyRowsErr.message);
-      await logDbError(
-        { organisationid: organisationId, eventid: eventId, batchid },
-        readonlyRowsErr,
-        'Fel vid SELECT readonly i results'
-      );
-    } else if (Array.isArray(readonlyRows) && readonlyRows.length > 0) {
+    let readonlyRows = [];
+    // 1) readonly för icke-null clubparticipation IN (...)
+    if (clubsNonNull.length > 0) {
+      const { data, error } = await supabase
+        .from('results')
+        .select('clubparticipation, personid, eventraceid, relayleg')
+        .eq('eventid', eventId)
+        .in('clubparticipation', clubsNonNull)
+        .eq('readonly', 1);
+      if (error) {
+        console.warn(`${logContext} Kunde inte läsa readonly-resultatrader (IN):`, error.message);
+        await logDbError(
+          { organisationid: organisationId, eventid: eventId, batchid },
+          error,
+          'Fel vid SELECT readonly (IN) i results'
+        );
+      } else if (Array.isArray(data)) {
+        readonlyRows = readonlyRows.concat(data);
+      }
+    }
+    // 2) readonly för clubparticipation IS NULL (om inkommande innehåller null)
+    if (incomingClubs.has(null)) {
+      const { data, error } = await supabase
+        .from('results')
+        .select('clubparticipation, personid, eventraceid, relayleg')
+        .eq('eventid', eventId)
+        .is('clubparticipation', null)
+        .eq('readonly', 1);
+      if (error) {
+        console.warn(`${logContext} Kunde inte läsa readonly-resultatrader (IS NULL):`, error.message);
+        await logDbError(
+          { organisationid: organisationId, eventid: eventId, batchid },
+          error,
+          'Fel vid SELECT readonly (IS NULL) i results'
+        );
+      } else if (Array.isArray(data)) {
+        readonlyRows = readonlyRows.concat(data);
+      }
+    }
+
+    if (readonlyRows.length > 0) {
       const skipSet = new Set(
-        readonlyRows.map((r) => `${r.personid}|${r.eventraceid}|${r.relayleg ?? ''}`)
+        readonlyRows.map((r) => `${r.clubparticipation ?? 'NULL'}|${r.personid}|${r.eventraceid}|${r.relayleg ?? ''}`)
       );
       const before = parsed.length;
       parsed = parsed.filter((row) => {
-        const key = `${row.personid}|${row.eventraceid}|${row.relayleg ?? ''}`;
+        const key = `${row.clubparticipation ?? 'NULL'}|${row.personid}|${row.eventraceid}|${row.relayleg ?? ''}`;
         return !skipSet.has(key);
       });
       const filteredOut = before - parsed.length;
@@ -278,24 +314,36 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
 
   console.log(`${logContext} ${parsed.length} resultat efter filtrering`);
 
-  // 4) Rensa gamla rader (utan att röra readonly=1)
+  // === NYCKEL-DEL 2: Rensa gamla rader per clubparticipation+eventid =========
+  // För varje inkommande clubparticipation (inkl. null) – ta bort befintliga rader
+  // i results för samma eventid och clubparticipation, men lämna readonly=1 orört.
   try {
-    const { error: delErr } = await supabase
-      .from('results')
-      .delete()
-      .eq('clubparticipation', organisationId)
-      .eq('eventid', eventId)
-      .not('readonly', 'eq', 1);
-
-    if (delErr) {
-      console.error(`${logContext} Fel vid delete av tidigare rader:`, delErr.message);
-      await logDbError(
-        { organisationid: organisationId, eventid: eventId, batchid },
-        delErr,
-        'Fel vid DELETE results'
-      );
-    } else {
-      console.log(`${logContext} Tidigare rader rensade (readonly rader sparade)`);
+    const incomingClubs = Array.from(new Set(parsed.map((r) => (r.clubparticipation ?? null))));
+    for (const club of incomingClubs) {
+      let delQ = supabase.from('results').delete().eq('eventid', eventId).not('readonly', 'eq', 1);
+      if (club === null) {
+        delQ = delQ.is('clubparticipation', null);
+      } else {
+        delQ = delQ.eq('clubparticipation', club);
+      }
+      const { error: delErr } = await delQ;
+      if (delErr) {
+        console.error(`${logContext} Fel vid delete för clubparticipation=${club}:`, delErr.message);
+        await logDbError(
+          { organisationid: organisationId, eventid: eventId, batchid },
+          delErr,
+          `Fel vid DELETE results (clubparticipation=${club === null ? 'NULL' : club})`
+        );
+      } else {
+        await insertLogData(supabase, {
+          source: 'GetResultsFetcher',
+          level: 'info',
+          comment: `Rensade tidigare rader för clubparticipation=${club === null ? 'NULL' : club} (readonly=1 bevarade)`,
+          organisationid: organisationId,
+          eventid: eventId,
+          batchid
+        });
+      }
     }
   } catch (e) {
     console.error(`${logContext} Ovänterat fel vid delete:`, e);
@@ -310,7 +358,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
   for (const row of parsed) {
     const originalClubParticipation = row.clubparticipation ?? null;
 
-    // assign batch/event id to each row
+    // sätt metadata på varje rad
     row.batchid = batchid;
     row.eventid = eventId;
     // OBS: vi sätter INTE row.clubparticipation = organisationId; (vi behåller parserns värde)
@@ -339,7 +387,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     }
 
     if (originalClubParticipation == null) {
-      // Bygg en mer informativ varning inklusive namn, etapp och tid
+      // Mer informativ varning inklusive namn, etapp och tid
       const given = row.persongiven ?? '';
       const family = row.personfamily ?? '';
       const leg = row.relayleg != null ? row.relayleg : '';
@@ -350,7 +398,10 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
         const h = Math.floor(secs / 3600);
         const m = Math.floor((secs % 3600) / 60);
         const s = Math.floor(secs % 60);
-        timeStr = h > 0 ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}` : `${m}:${s.toString().padStart(2, '0')}`;
+        timeStr =
+          h > 0
+            ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+            : `${m}:${s.toString().padStart(2, '0')}`;
       }
       const msg = `XML clubparticipation saknas – importerande klubb är ${organisationId}. Raden sparas med null i clubparticipation. personname given="${given}", personname family="${family}", leg=${leg}, time=${timeStr ?? 'null'}`;
       await insertLogData(supabase, {
@@ -364,9 +415,8 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
     }
   }
 
-  // 6) Skriv varningar från parsern (om några) – redan loggade vissa ovan
+  // 6) Skriv varningar från parsern (om några)
   try {
-    // Skicka parser-warnings till warnings-tabellen
     if (Array.isArray(warningsFromParse) && warningsFromParse.length > 0) {
       const warningRows = warningsFromParse.map((w) => ({
         organisationid: organisationId,
@@ -398,7 +448,7 @@ async function fetchResultsForEvent({ organisationId, eventId, batchid, apikey }
   }
 
   // 7) Skriv resultat – chunkad insert med DB-fellogg
-  // Remove transient name fields before inserting into the results table
+  // Ta bort transient name fields innan insert i results
   const sanitizedParsed = parsed.map(({ persongiven, personfamily, ...rest }) => rest);
   const chunks = chunkArray(sanitizedParsed, 1000);
   let totalInserted = 0;
